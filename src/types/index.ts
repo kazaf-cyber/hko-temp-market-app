@@ -87,13 +87,15 @@ export type HkoWeatherSnapshot = {
   [key: string]: unknown;
 };
 
-export type MarketOutcome = {
+export type OutcomeRange = {
   name: string;
   lower: number | null;
   upper: number | null;
 
   [key: string]: unknown;
 };
+
+export type MarketOutcome = OutcomeRange;
 
 export type ForecastOutcomeProbability = {
   name: string;
@@ -174,7 +176,7 @@ export type SettlementResult = {
 export type MarketState = {
   useAI: boolean;
 
-  outcomes: MarketOutcome[];
+  outcomes: OutcomeRange[];
 
   manualMaxOverrideC: number | null;
   rainEtaMinutes: number | null;
