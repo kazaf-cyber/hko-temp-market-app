@@ -6,6 +6,13 @@ export type RainIntensity =
   | "violent"
   | string;
 
+export type HkoCurrent = {
+  hkoCurrentTempC?: number | null;
+  recordTime?: string | null;
+
+  [key: string]: unknown;
+};
+
 export type HkoForecastDay = {
   forecastDate?: string;
   week?: string;
@@ -27,10 +34,11 @@ export type HkoForecastDay = {
 export type HkoForecast = {
   days?: HkoForecastDay[];
   updateTime?: string;
+
   [key: string]: unknown;
 };
 
-export type WeatherSnapshot = {
+export type HkoWeatherSnapshot = {
   hktDate?: string;
 
   temperatureC?: number | null;
@@ -38,6 +46,7 @@ export type WeatherSnapshot = {
   rainfallMm?: number | null;
   rainIntensity?: RainIntensity | null;
 
+  current?: HkoCurrent | null;
   forecast?: HkoForecast | null;
 
   source?: string;
@@ -46,8 +55,6 @@ export type WeatherSnapshot = {
 
   [key: string]: unknown;
 };
-
-export type HkoWeatherSnapshot = WeatherSnapshot;
 
 export type ForecastResult = {
   hktDate?: string;
