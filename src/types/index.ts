@@ -94,8 +94,14 @@ export type HkoWeatherSnapshot = {
   [key: string]: unknown;
 };
 
-export type MarketOutcome = OutcomeRange;
+export type OutcomeRange = {
+  name: string;
+  lower: number | null;
+  upper: number | null;
 
+  [key: string]: unknown;
+};
+export type MarketOutcome = OutcomeRange;
 export type ForecastOutcomeProbability = {
   name: string;
   probability: number;
