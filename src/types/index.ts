@@ -32,8 +32,8 @@ export type HkoHourlyRainfall = {
 };
 
 export type HkoForecastDay = {
-  forecastDate?: string;
-  week?: string;
+  forecastDate?: string | null;
+  week?: string | null;
 
   forecastWeather?: string | null;
   forecastWind?: string | null;
@@ -47,13 +47,13 @@ export type HkoForecastDay = {
   ForecastIcon?: number | null;
 
   /**
-   * HKO data sometimes uses uppercase PSR.
+   * Some HKO-style data uses uppercase PSR.
    */
   PSR?: string | null;
 
   /**
-   * Your page.tsx currently reads lowercase psr.
-   * Keep both to avoid TypeScript/runtime mismatch.
+   * Your page.tsx reads lowercase psr.
+   * Keep both to avoid casing mismatch.
    */
   psr?: string | null;
 
@@ -61,14 +61,14 @@ export type HkoForecastDay = {
 };
 
 export type HkoForecast = {
-  days?: HkoForecastDay[];
+  days?: HkoForecastDay[] | null;
   updateTime?: string | null;
 
   [key: string]: unknown;
 };
 
 export type HkoWeatherSnapshot = {
-  hktDate?: string;
+  hktDate?: string | null;
 
   temperatureC?: number | null;
   humidityPct?: number | null;
@@ -80,8 +80,8 @@ export type HkoWeatherSnapshot = {
   hourlyRainfall?: HkoHourlyRainfall | null;
   forecast?: HkoForecast | null;
 
-  source?: string;
-  observedAt?: string;
+  source?: string | null;
+  observedAt?: string | null;
   raw?: unknown;
 
   [key: string]: unknown;
@@ -103,29 +103,33 @@ export type ForecastOutcomeProbability = {
 };
 
 export type EstimatedFinalMaxC = {
-  p10: number;
-  p25: number;
-  median: number;
-  p75: number;
-  p90: number;
+  p10?: number | null;
+  p25?: number | null;
+  median?: number | null;
+  p75?: number | null;
+  p90?: number | null;
 
   [key: string]: unknown;
 };
 
+/**
+ * Keep this flexible because API routes / AI wrappers / DB history
+ * may not always return every UI field.
+ */
 export type ForecastResult = {
-  hktDate?: string;
-  targetDate?: string;
+  hktDate?: string | null;
+  targetDate?: string | null;
 
-  generatedAt: string;
+  generatedAt?: string | null;
 
-  maxSoFarC: number | null;
-  maxSoFarSource: string;
+  maxSoFarC?: number | null;
+  maxSoFarSource?: string | null;
 
-  estimatedFinalMaxC: EstimatedFinalMaxC;
-  outcomeProbabilities: ForecastOutcomeProbability[];
+  estimatedFinalMaxC?: EstimatedFinalMaxC | null;
+  outcomeProbabilities?: ForecastOutcomeProbability[] | null;
 
-  keyDrivers: string[];
-  warnings: string[];
+  keyDrivers?: string[] | null;
+  warnings?: string[] | null;
 
   predictedTempC?: number | null;
   predictedMinTempC?: number | null;
@@ -142,17 +146,17 @@ export type ForecastResult = {
 };
 
 export type SettlementResult = {
-  hktDate?: string;
-  targetDate?: string;
+  hktDate?: string | null;
+  targetDate?: string | null;
 
-  date: string;
-  officialMaxTempC: number | null;
-  available: boolean;
+  date?: string | null;
+  officialMaxTempC?: number | null;
+  available?: boolean | null;
 
   rawKey?: string | null;
   note?: string | null;
 
-  settled?: boolean;
+  settled?: boolean | null;
 
   actualTempC?: number | null;
   forecastTempC?: number | null;
