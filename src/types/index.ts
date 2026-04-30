@@ -96,6 +96,8 @@ export type OutcomeRange = {
 
 export type MarketOutcome = OutcomeRange;
 
+export type MarketOutcome = OutcomeRange;
+
 export type ForecastOutcomeProbability = {
   name: string;
   probability: number;
