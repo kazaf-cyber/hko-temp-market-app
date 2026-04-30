@@ -303,42 +303,52 @@ function buildKeyDrivers(params: {
 
   const currentTempC = params.snapshot.current.hkoCurrentTempC;
 
-  if (currentTempC !== null) {
+  if (typeof currentTempC === "number") {
     drivers.push(`HKO current temperature is ${currentTempC.toFixed(1)}°C.`);
+  } else {
+    drivers.push("HKO current temperature is not available.");
   }
 
-  if (params.snapshot.sinceMidnight?.maxTempC !== null) {
+  const maxSinceMidnightC = params.snapshot.sinceMidnight?.maxTempC;
+
+  if (typeof maxSinceMidnightC === "number") {
     drivers.push(
-      `HKO maximum temperature since midnight is ${params.snapshot.sinceMidnight?.maxTempC?.toFixed(
+      `HKO maximum temperature since midnight is ${maxSinceMidnightC.toFixed(
         1
       )}°C.`
     );
+  } else {
+    drivers.push("HKO maximum temperature since midnight is not available.");
   }
 
   drivers.push(`Model max-so-far input is ${params.maxSoFarC.toFixed(1)}°C.`);
 
-  if (params.officialForecastMaxC !== null) {
+  if (typeof params.officialForecastMaxC === "number") {
     drivers.push(
       `Official HKO forecast maximum temperature anchor is ${params.officialForecastMaxC.toFixed(
         1
       )}°C.`
     );
+  } else {
+    drivers.push("Official HKO forecast maximum temperature is not available.");
   }
 
-  if (params.snapshot.hourlyRainfall?.rainfallMm !== null) {
+  const hourlyRainfallMm = params.snapshot.hourlyRainfall?.rainfallMm;
+
+  if (typeof hourlyRainfallMm === "number") {
     drivers.push(
-      `Observed HKO hourly rainfall is ${params.snapshot.hourlyRainfall?.rainfallMm?.toFixed(
-        1
-      )} mm.`
+      `Observed HKO hourly rainfall is ${hourlyRainfallMm.toFixed(1)} mm.`
     );
   }
 
-  if (params.state.rainEtaMinutes !== null) {
+  if (typeof params.state.rainEtaMinutes === "number") {
     drivers.push(
       `Rainband ETA is around ${params.state.rainEtaMinutes} minutes, with ${Math.round(
         params.state.rainProbability120m * 100
       )}% rain probability in the next 120 minutes.`
     );
+  } else {
+    drivers.push("No rainband ETA is currently provided.");
   }
 
   drivers.push(
