@@ -157,7 +157,7 @@ export default function HomePage() {
       return null;
     }
 
-    return weather.forecast.days[0]?.forecastMaxtempC ?? null;
+    return weather.forecast?.days?.[0]?.forecastMaxtempC ?? null;
   }, [weather]);
 
   function updateState(partial: Partial<MarketState>) {
