@@ -6,6 +6,33 @@ export type RainIntensity =
   | "violent"
   | string;
 
+export type HkoForecastDay = {
+  forecastDate?: string;
+  week?: string;
+  forecastWeather?: string | null;
+  forecastWind?: string | null;
+
+  /**
+   * Keep this spelling exactly the same as page.tsx:
+   * forecastMaxtempC
+   */
+  forecastMaxtempC?: number | null;
+  forecastMintempC?: number | null;
+
+  forecastMaxrh?: number | null;
+  forecastMinrh?: number | null;
+  ForecastIcon?: number | null;
+  PSR?: string | null;
+
+  [key: string]: unknown;
+};
+
+export type HkoForecast = {
+  days?: HkoForecastDay[];
+  updateTime?: string;
+  [key: string]: unknown;
+};
+
 export type WeatherSnapshot = {
   hktDate?: string;
   temperatureC?: number | null;
@@ -15,6 +42,12 @@ export type WeatherSnapshot = {
   source?: string;
   observedAt?: string;
   raw?: unknown;
+
+  /**
+   * This is the important new field.
+   */
+  forecast?: HkoForecast | null;
+
   [key: string]: unknown;
 };
 
