@@ -13,8 +13,7 @@ export type HkoForecastDay = {
   forecastWind?: string | null;
 
   /**
-   * Keep this spelling exactly the same as page.tsx:
-   * forecastMaxtempC
+   * Must match the property used in src/app/page.tsx.
    */
   forecastMaxtempC?: number | null;
   forecastMintempC?: number | null;
@@ -39,51 +38,14 @@ export type WeatherSnapshot = {
   humidityPct?: number | null;
   rainfallMm?: number | null;
   rainIntensity?: RainIntensity;
+
+  forecast?: HkoForecast | null;
+
   source?: string;
   observedAt?: string;
   raw?: unknown;
-
-  /**
-   * This is the important new field.
-   */
-  forecast?: HkoForecast | null;
 
   [key: string]: unknown;
 };
 
 export type HkoWeatherSnapshot = WeatherSnapshot;
-export type ForecastResult = {
-  hktDate: string;
-  aiExplanation?: string | null;
-  predictedTempC?: number | null;
-  predictedMinTempC?: number | null;
-  predictedMaxTempC?: number | null;
-  confidence?: number | null;
-  rainIntensity?: RainIntensity;
-  recommendation?: string | null;
-  reason?: string | null;
-  [key: string]: unknown;
-};
-
-export type SettlementResult = {
-  hktDate?: string;
-  settled?: boolean;
-  actualTempC?: number | null;
-  forecastTempC?: number | null;
-  difference?: number | null;
-  outcome?: string | null;
-  pnl?: number | null;
-  reason?: string | null;
-  [key: string]: unknown;
-};
-
-export type MarketState = {
-  useAI: boolean;
-  balance?: number;
-  cash?: number;
-  position?: number;
-  holdings?: number;
-  lastForecast?: ForecastResult | null;
-  lastSettlement?: SettlementResult | null;
-  [key: string]: unknown;
-};
