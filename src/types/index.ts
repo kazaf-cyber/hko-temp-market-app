@@ -18,6 +18,7 @@ export type WeatherSnapshot = {
   [key: string]: unknown;
 };
 
+export type HkoWeatherSnapshot = WeatherSnapshot;
 export type ForecastResult = {
   hktDate: string;
   aiExplanation?: string | null;
