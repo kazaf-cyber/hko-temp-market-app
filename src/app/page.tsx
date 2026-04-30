@@ -153,12 +153,12 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const officialForecastMax = useMemo(() => {
-    if (!weather) {
-      return null;
-    }
+  if (!weather) {
+    return null;
+  }
 
-    return weather.forecast?.days?.[0]?.forecastMaxtempC ?? null;}, 
-    [weather]);
+  return weather.forecast?.days?.[0]?.forecastMaxtempC ?? null;
+}, [weather]);
 
   function updateState(partial: Partial<MarketState>) {
     setState((previous) => ({
@@ -442,8 +442,8 @@ export default function HomePage() {
         <section className="grid gap-4 md:grid-cols-5">
           <Card
             label="HKO Current Temp"
-            value={formatTemp(weather?.current.hkoCurrentTempC)}
-            sub={`Record: ${weather?.current.recordTime ?? "--"}`}
+            value={formatTemp(weather?.current?.hkoCurrentTempC)}
+            sub={`Record: ${weather?.current?.recordTime ?? "--"}`}
           />
 
           <Card
@@ -461,7 +461,11 @@ export default function HomePage() {
           <Card
             label="Official Forecast Max"
             value={formatTemp(officialForecastMax)}
-            sub={`PSR: ${weather?.forecast.days[0]?.psr ?? "--"}`}
+            sub={`PSR: ${
+  weather?.forecast?.days?.[0]?.psr ??
+  weather?.forecast?.days?.[0]?.PSR ??
+  "--"
+}`}
           />
 
           <Card
