@@ -60,8 +60,9 @@ export type HkoForecastDay = {
 };
 
 export type HkoForecast = {
-  days?: HkoForecastDay[] | null;
+  days: HkoForecastDay[];
   updateTime?: string | null;
+  generalSituation?: string | null;
 
   [key: string]: unknown;
 };
@@ -74,22 +75,21 @@ export type HkoWeatherSnapshot = {
   rainfallMm?: number | null;
   rainIntensity?: RainIntensity | null;
 
-  current?: HkoCurrent | null;
+  /**
+   * Required: getHkoWeatherSnapshot() should always return these.
+   */
+  current: HkoCurrent;
+  forecast: HkoForecast;
+
+  /**
+   * Optional: these may fail independently or be unavailable.
+   */
   sinceMidnight?: HkoSinceMidnight | null;
   hourlyRainfall?: HkoHourlyRainfall | null;
-  forecast?: HkoForecast | null;
 
   source?: string | null;
   observedAt?: string | null;
   raw?: unknown;
-
-  [key: string]: unknown;
-};
-
-export type OutcomeRange = {
-  name: string;
-  lower: number | null;
-  upper: number | null;
 
   [key: string]: unknown;
 };
