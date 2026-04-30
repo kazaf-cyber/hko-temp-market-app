@@ -37,7 +37,10 @@ export async function POST(request: Request) {
       aiExplanation
     };
 
-    let historySave = {
+    let historySave: {
+      saved: boolean;
+      reason: string | null;
+    } = {
       saved: false,
       reason: "saveHistory was false."
     };
