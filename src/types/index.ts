@@ -96,14 +96,14 @@ export type OutcomeRange = {
 
 export type MarketOutcome = OutcomeRange;
 
-export type MarketOutcome = OutcomeRange;
-
 export type ForecastOutcomeProbability = {
   name: string;
   probability: number;
 
   [key: string]: unknown;
 };
+
+export type OutcomeProbability = ForecastOutcomeProbability;
 
 export type EstimatedFinalMaxC = {
   p10?: number | null;
@@ -115,6 +115,7 @@ export type EstimatedFinalMaxC = {
   [key: string]: unknown;
 };
 
+export type ForecastPercentiles = EstimatedFinalMaxC;
 /**
  * Keep this flexible because API routes / AI wrappers / DB history
  * may not always return every UI field.
@@ -198,3 +199,8 @@ export type MarketState = {
 
   [key: string]: unknown;
 };
+
+export type WeatherSnapshot = HkoWeatherSnapshot;
+export type HkoSinceMidnightMaxMin = HkoSinceMidnight;
+export type HkoCurrentWeather = HkoCurrent;
+
