@@ -9,6 +9,20 @@ import { forecastApiRequestSchema } from "@/lib/validation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type ForecastBase = {
+  hktDate: string;
+  [key: string]: unknown;
+};
+
+type ForecastResultWithAI = ForecastBase & {
+  aiExplanation: string | null;
+};
+
+type HistorySaveResult = {
+  saved: boolean;
+  reason: string | null;
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -18,7 +32,8 @@ export async function POST(request: Request) {
     const state = parsed.state ?? persistedState.state;
 
     const snapshot = await getHkoWeatherSnapshot();
-    const forecastWithoutAI = estimateForecast(snapshot, state);
+
+    const forecastWithoutAI = estimateForecast(snapshot, state) as ForecastBase;
 
     let aiExplanation: string | null = null;
 
@@ -32,15 +47,12 @@ export async function POST(request: Request) {
       });
     }
 
-    const result = {
+    const result: ForecastResultWithAI = {
       ...forecastWithoutAI,
       aiExplanation
     };
 
-    let historySave: {
-      saved: boolean;
-      reason: string | null;
-    } = {
+    let historySave: HistorySaveResult = {
       saved: false,
       reason: "saveHistory was false."
     };
