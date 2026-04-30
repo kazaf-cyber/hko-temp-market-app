@@ -4,6 +4,7 @@ export type RainIntensity =
   | "moderate"
   | "heavy"
   | "violent"
+  | "thunderstorm"
   | string;
 
 export type HkoCurrent = {
@@ -13,9 +14,27 @@ export type HkoCurrent = {
   [key: string]: unknown;
 };
 
+export type HkoSinceMidnight = {
+  maxTempC?: number | null;
+  maxTempTime?: string | null;
+
+  minTempC?: number | null;
+  minTempTime?: string | null;
+
+  [key: string]: unknown;
+};
+
+export type HkoHourlyRainfall = {
+  rainfallMm?: number | null;
+  obsTime?: string | null;
+
+  [key: string]: unknown;
+};
+
 export type HkoForecastDay = {
   forecastDate?: string;
   week?: string;
+
   forecastWeather?: string | null;
   forecastWind?: string | null;
 
@@ -26,14 +45,24 @@ export type HkoForecastDay = {
   forecastMinrh?: number | null;
 
   ForecastIcon?: number | null;
+
+  /**
+   * HKO data sometimes uses uppercase PSR.
+   */
   PSR?: string | null;
+
+  /**
+   * Your page.tsx currently reads lowercase psr.
+   * Keep both to avoid TypeScript/runtime mismatch.
+   */
+  psr?: string | null;
 
   [key: string]: unknown;
 };
 
 export type HkoForecast = {
   days?: HkoForecastDay[];
-  updateTime?: string;
+  updateTime?: string | null;
 
   [key: string]: unknown;
 };
@@ -47,6 +76,8 @@ export type HkoWeatherSnapshot = {
   rainIntensity?: RainIntensity | null;
 
   current?: HkoCurrent | null;
+  sinceMidnight?: HkoSinceMidnight | null;
+  hourlyRainfall?: HkoHourlyRainfall | null;
   forecast?: HkoForecast | null;
 
   source?: string;
@@ -56,9 +87,45 @@ export type HkoWeatherSnapshot = {
   [key: string]: unknown;
 };
 
+export type MarketOutcome = {
+  name: string;
+  lower: number | null;
+  upper: number | null;
+
+  [key: string]: unknown;
+};
+
+export type ForecastOutcomeProbability = {
+  name: string;
+  probability: number;
+
+  [key: string]: unknown;
+};
+
+export type EstimatedFinalMaxC = {
+  p10: number;
+  p25: number;
+  median: number;
+  p75: number;
+  p90: number;
+
+  [key: string]: unknown;
+};
+
 export type ForecastResult = {
   hktDate?: string;
   targetDate?: string;
+
+  generatedAt: string;
+
+  maxSoFarC: number | null;
+  maxSoFarSource: string;
+
+  estimatedFinalMaxC: EstimatedFinalMaxC;
+  outcomeProbabilities: ForecastOutcomeProbability[];
+
+  keyDrivers: string[];
+  warnings: string[];
 
   predictedTempC?: number | null;
   predictedMinTempC?: number | null;
@@ -78,6 +145,13 @@ export type SettlementResult = {
   hktDate?: string;
   targetDate?: string;
 
+  date: string;
+  officialMaxTempC: number | null;
+  available: boolean;
+
+  rawKey?: string | null;
+  note?: string | null;
+
   settled?: boolean;
 
   actualTempC?: number | null;
@@ -95,6 +169,17 @@ export type SettlementResult = {
 
 export type MarketState = {
   useAI: boolean;
+
+  outcomes: MarketOutcome[];
+
+  manualMaxOverrideC: number | null;
+  rainEtaMinutes: number | null;
+
+  cloudCoverPct: number;
+  rainProbability60m: number;
+  rainProbability120m: number;
+
+  expectedRainIntensity: RainIntensity;
 
   balance?: number;
   cash?: number;
