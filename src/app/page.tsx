@@ -20,6 +20,18 @@ type StateResponse = {
   error?: string;
 };
 
+type PolymarketResponse = {
+  ok: boolean;
+  data?: {
+    slug: string;
+    eventTitle: string | null;
+    marketQuestion: string | null;
+    marketSlug: string | null;
+    outcomes: MarketState["outcomes"];
+  };
+  error?: string;
+};
+
 type WeatherResponse = {
   ok: boolean;
   data?: HkoWeatherSnapshot;
@@ -69,6 +81,27 @@ function formatPercent(value: number | null | undefined) {
   }
 
   return `${Math.round(value * 100)}%`;
+}
+
+function formatSignedPercent(value: number | null | undefined) {
+  if (typeof value !== "number") {
+    return "--";
+  }
+
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${Math.round(value * 100)}%`;
+}
+
+function getOutcomeMarketPrice(outcome: MarketState["outcomes"][number]) {
+  if (typeof outcome.marketPrice === "number") {
+    return outcome.marketPrice;
+  }
+
+  if (typeof outcome.price === "number") {
+    return outcome.price;
+  }
+
+  return null;
 }
 
 function formatHktDateTime(isoString: string | null | undefined) {
@@ -137,6 +170,11 @@ export default function HomePage() {
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [settlement, setSettlement] = useState<SettlementResult | null>(null);
+  const [polymarketUrl, setPolymarketUrl] = useState(
+  "https://polymarket.com/zh-hant/event/highest-temperature-in-hong-kong-on-may-1-2026"
+  );
+
+  const [loadingPolymarket, setLoadingPolymarket] = useState(false);
 
   const [adminSecret, setAdminSecret] = useState("");
   const [outcomesJson, setOutcomesJson] = useState(
@@ -213,7 +251,48 @@ export default function HomePage() {
       setHistory(json.data.history);
     }
   }
+  
+async function loadPolymarketOutcomes() {
+  setLoadingPolymarket(true);
+  setError(null);
+  setMessage(null);
 
+  try {
+    const response = await fetch(
+      `/api/polymarket?url=${encodeURIComponent(polymarketUrl)}`,
+      {
+        cache: "no-store"
+      }
+    );
+
+    const json = (await response.json()) as PolymarketResponse;
+
+    if (!json.ok || !json.data) {
+      throw new Error(json.error || "Failed to load Polymarket outcomes.");
+    }
+
+    const nextOutcomes = json.data.outcomes;
+
+    setState((previous) => ({
+      ...previous,
+      outcomes: nextOutcomes
+    }));
+
+    setOutcomesJson(JSON.stringify(nextOutcomes, null, 2));
+
+    setMessage(
+      `Loaded ${nextOutcomes.length} Polymarket outcomes from ${json.data.slug}. Now run forecast again.`
+    );
+  } catch (err) {
+    setError(
+      err instanceof Error
+        ? err.message
+        : "Unknown Polymarket loading error."
+    );
+  } finally {
+    setLoadingPolymarket(false);
+  }
+}
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -505,6 +584,35 @@ export default function HomePage() {
             </div>
           </div>
 
+          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+  <label className="block">
+    <span className="text-sm text-slate-300">
+      Polymarket event URL / slug
+    </span>
+
+    <input
+      value={polymarketUrl}
+      onChange={(event) => setPolymarketUrl(event.target.value)}
+      className={inputClass}
+      type="text"
+      placeholder="Paste Polymarket event URL here"
+    />
+  </label>
+
+  <div className="mt-3 flex flex-wrap gap-2">
+    <button
+      onClick={() => void loadPolymarketOutcomes()}
+      disabled={loadingPolymarket}
+      className={buttonSecondary}
+    >
+      {loadingPolymarket ? "Loading Polymarket..." : "Load Polymarket outcomes"}
+    </button>
+
+    <p className="text-sm text-slate-400">
+      讀取後會更新 outcomes JSON；之後再按「更新預測並儲存」重新計算概率。
+    </p>
+  </div>
+</div>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <label className="block">
               <span className="text-sm text-slate-300">
@@ -670,23 +778,48 @@ export default function HomePage() {
                 </thead>
 
                 <tbody>
+                  
                   {state.outcomes.map((outcome) => {
-                    const probability =
-                 forecast?.outcomeProbabilities?.find(
-                (item) => item.name === outcome.name
-                 )?.probability ?? null;
+  const probability =
+    forecast?.outcomeProbabilities?.find(
+      (item) => item.name === outcome.name
+    )?.probability ?? null;
 
-                    return (
-                      <tr key={outcome.name}>
+  const marketPrice = getOutcomeMarketPrice(outcome);
+
+  const edge =
+    typeof probability === "number" && typeof marketPrice === "number"
+      ? probability - marketPrice
+      : null;
+
+  return (
+    <tr key={outcome.name}>
+      
                         <td className="border-b border-slate-800 py-3 pr-4 font-medium">
                           {outcome.name}
                         </td>
                         <td className="border-b border-slate-800 py-3 pr-4 text-slate-300">
                           {rangeLabel(outcome.lower, outcome.upper)}
                         </td>
-                        <td className="border-b border-slate-800 py-3 pr-4 text-cyan-300">
-                          {formatPercent(probability)}
-                        </td>
+                       <td className="border-b border-slate-800 py-3 pr-4 text-slate-300">
+                     {formatPercent(marketPrice)}
+                    </td>
+
+                     <td className="border-b border-slate-800 py-3 pr-4 text-cyan-300">
+                       {formatPercent(probability)}
+                    </td>
+
+<td
+  className={
+    edge !== null && edge > 0
+      ? "border-b border-slate-800 py-3 pr-4 text-emerald-300"
+      : edge !== null && edge < 0
+        ? "border-b border-slate-800 py-3 pr-4 text-red-300"
+        : "border-b border-slate-800 py-3 pr-4 text-slate-400"
+  }
+>
+  {formatSignedPercent(edge)}
+</td>
                         <td className="border-b border-slate-800 py-3">
                           <div className="h-3 w-full rounded-full bg-slate-800">
                             <div
