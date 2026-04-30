@@ -152,13 +152,10 @@ export default function HomePage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const officialForecastMax = useMemo(() => {
-  if (!weather) {
-    return null;
-  }
-
-  return weather.forecast?.days?.[0]?.forecastMaxtempC ?? null;
-}, [weather]);
+  const officialForecastMax = useMemo(
+  () => weather?.forecast?.days?.[0]?.forecastMaxtempC ?? null,
+  [weather]
+);
 
   function updateState(partial: Partial<MarketState>) {
     setState((previous) => ({
@@ -441,9 +438,9 @@ export default function HomePage() {
 
         <section className="grid gap-4 md:grid-cols-5">
           <Card
-            label="HKO Current Temp"
-            value={formatTemp(weather?.current?.hkoCurrentTempC)}
-            sub={`Record: ${weather?.current?.recordTime ?? "--"}`}
+          label="HKO Current Temp"
+          value={formatTemp(weather?.current?.hkoCurrentTempC)}
+         sub={`Record: ${weather?.current?.recordTime ?? "--"}`}
           />
 
           <Card
@@ -462,10 +459,10 @@ export default function HomePage() {
             label="Official Forecast Max"
             value={formatTemp(officialForecastMax)}
             sub={`PSR: ${
-  weather?.forecast?.days?.[0]?.psr ??
-  weather?.forecast?.days?.[0]?.PSR ??
-  "--"
-}`}
+            weather?.forecast?.days?.[0]?.psr ??
+            weather?.forecast?.days?.[0]?.PSR ??
+             "--"
+             }`}
           />
 
           <Card
@@ -675,9 +672,9 @@ export default function HomePage() {
                 <tbody>
                   {state.outcomes.map((outcome) => {
                     const probability =
-                      forecast?.outcomeProbabilities.find(
-                        (item) => item.name === outcome.name
-                      )?.probability ?? null;
+                 forecast?.outcomeProbabilities?.find(
+                (item) => item.name === outcome.name
+                 )?.probability ?? null;
 
                     return (
                       <tr key={outcome.name}>
@@ -723,46 +720,46 @@ export default function HomePage() {
                 <p className="mt-1 text-sm text-slate-400">
                   Max so far source:{" "}
                   <span className="text-cyan-300">
-                    {forecast.maxSoFarSource}
+                    {forecast.maxSoFarSource ?? "--"}
                   </span>
                 </p>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <p className="text-slate-400">P10</p>
-                    <p className="text-2xl font-bold">
-                      {forecast.estimatedFinalMaxC.p10.toFixed(1)}°C
-                    </p>
-                  </div>
+  <div className="rounded-xl bg-slate-950 p-3">
+    <p className="text-slate-400">P10</p>
+    <p className="text-2xl font-bold">
+      {formatTemp(forecast.estimatedFinalMaxC?.p10)}
+    </p>
+  </div>
 
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <p className="text-slate-400">P25</p>
-                    <p className="text-2xl font-bold">
-                      {forecast.estimatedFinalMaxC.p25.toFixed(1)}°C
-                    </p>
-                  </div>
+  <div className="rounded-xl bg-slate-950 p-3">
+    <p className="text-slate-400">P25</p>
+    <p className="text-2xl font-bold">
+      {formatTemp(forecast.estimatedFinalMaxC?.p25)}
+    </p>
+  </div>
 
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <p className="text-slate-400">Median</p>
-                    <p className="text-2xl font-bold text-cyan-300">
-                      {forecast.estimatedFinalMaxC.median.toFixed(1)}°C
-                    </p>
-                  </div>
+  <div className="rounded-xl bg-slate-950 p-3">
+    <p className="text-slate-400">Median</p>
+    <p className="text-2xl font-bold text-cyan-300">
+      {formatTemp(forecast.estimatedFinalMaxC?.median)}
+    </p>
+  </div>
 
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <p className="text-slate-400">P75</p>
-                    <p className="text-2xl font-bold">
-                      {forecast.estimatedFinalMaxC.p75.toFixed(1)}°C
-                    </p>
-                  </div>
+  <div className="rounded-xl bg-slate-950 p-3">
+    <p className="text-slate-400">P75</p>
+    <p className="text-2xl font-bold">
+      {formatTemp(forecast.estimatedFinalMaxC?.p75)}
+    </p>
+  </div>
 
-                  <div className="rounded-xl bg-slate-950 p-3">
-                    <p className="text-slate-400">P90</p>
-                    <p className="text-2xl font-bold">
-                      {forecast.estimatedFinalMaxC.p90.toFixed(1)}°C
-                    </p>
-                  </div>
-                </div>
+  <div className="rounded-xl bg-slate-950 p-3">
+    <p className="text-slate-400">P90</p>
+    <p className="text-2xl font-bold">
+      {formatTemp(forecast.estimatedFinalMaxC?.p90)}
+    </p>
+  </div>
+</div>
 
                 <div className="mt-4 rounded-xl bg-slate-950 p-4">
                   <p className="text-sm font-semibold text-cyan-300">
@@ -787,17 +784,17 @@ export default function HomePage() {
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <h2 className="text-xl font-semibold">Key drivers</h2>
               <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-slate-300">
-                {forecast.keyDrivers.map((driver) => (
-                  <li key={driver}>{driver}</li>
-                ))}
+                {(forecast.keyDrivers ?? []).map((driver) => (
+                 <li key={driver}>{driver}</li>
+                 ))}
               </ul>
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <h2 className="text-xl font-semibold">Warnings</h2>
               <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-amber-200">
-                {forecast.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
+                {(forecast.warnings ?? []).map((warning) => (
+                 <li key={warning}>{warning}</li>
                 ))}
               </ul>
             </div>
@@ -947,8 +944,8 @@ export default function HomePage() {
 
                   <tbody>
                     {history.map((row) => {
-                      const topOutcome = [...row.result.outcomeProbabilities].sort(
-                        (a, b) => b.probability - a.probability
+                      const topOutcome = [...(row.result.outcomeProbabilities ?? [])].sort(
+                     (a, b) => b.probability - a.probability
                       )[0];
 
                       return (
@@ -960,7 +957,7 @@ export default function HomePage() {
                             {formatTemp(row.result.maxSoFarC)}
                           </td>
                           <td className="border-b border-slate-800 py-2 pr-3">
-                            {formatTemp(row.result.estimatedFinalMaxC.median)}
+                            {formatTemp(row.result.estimatedFinalMaxC?.median)}
                           </td>
                           <td className="border-b border-slate-800 py-2">
                             {topOutcome
