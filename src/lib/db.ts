@@ -3,6 +3,71 @@ import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 
 let cachedSql: ReturnType<typeof neon> | null = null;
 
+type ForecastRunDbRow = {
+  id: number | string | bigint;
+  created_at: string | Date;
+  hkt_date: string;
+  result: unknown;
+};
+
+export type ForecastHistoryRow = {
+  id: number;
+  createdAt: string;
+  hktDate: string;
+  result: ForecastResult;
+};
+
+function normalizeRows<T>(value: unknown): T[] {
+  if (Array.isArray(value)) {
+    if (value.length > 0 && Array.isArray(value[0])) {
+      throw new Error(
+        "Database returned arrayMode rows. This app expects object rows. Please use arrayMode: false."
+      );
+    }
+
+    return value as T[];
+  }
+
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    "rows" in value &&
+    Array.isArray((value as { rows?: unknown }).rows)
+  ) {
+    return (value as { rows: T[] }).rows;
+  }
+
+  return [];
+}
+
+function toDateString(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value);
+}
+
+function parseForecastResult(value: unknown): ForecastResult {
+  if (value === null || value === undefined) {
+    return {} as ForecastResult;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as ForecastResult;
+    } catch {
+      return {} as ForecastResult;
+    }
+  }
+
+  return value as ForecastResult;
+}
+
 export function getSql() {
   const databaseUrl = process.env.DATABASE_URL;
 
@@ -11,7 +76,10 @@ export function getSql() {
   }
 
   if (!cachedSql) {
-    cachedSql = neon(databaseUrl);
+    cachedSql = neon(databaseUrl, {
+      arrayMode: false,
+      fullResults: false
+    });
   }
 
   return cachedSql;
@@ -59,7 +127,10 @@ export async function saveForecastRun(params: {
   state: MarketState;
   weather: HkoWeatherSnapshot;
   result: ForecastResult;
-}) {
+}): Promise<{
+  saved: boolean;
+  reason: string | null;
+}> {
   const sql = getSql();
 
   if (!sql) {
@@ -82,7 +153,7 @@ export async function saveForecastRun(params: {
       ${JSON.stringify(params.state)}::jsonb,
       ${JSON.stringify(params.weather)}::jsonb,
       ${JSON.stringify(params.result)}::jsonb,
-      ${params.result.aiExplanation}
+      ${params.result.aiExplanation ?? null}
     )
   `;
 
@@ -92,7 +163,9 @@ export async function saveForecastRun(params: {
   };
 }
 
-export async function getForecastHistory(limit = 30) {
+export async function getForecastHistory(
+  limit = 30
+): Promise<ForecastHistoryRow[]> {
   const sql = getSql();
 
   if (!sql) {
@@ -101,7 +174,7 @@ export async function getForecastHistory(limit = 30) {
 
   const safeLimit = Math.max(1, Math.min(limit, 100));
 
-  const rows = await sql`
+  const queryResult = await sql`
     SELECT
       id,
       created_at,
@@ -112,10 +185,12 @@ export async function getForecastHistory(limit = 30) {
     LIMIT ${safeLimit}
   `;
 
+  const rows = normalizeRows<ForecastRunDbRow>(queryResult);
+
   return rows.map((row) => ({
     id: Number(row.id),
-    createdAt: String(row.created_at),
+    createdAt: toDateString(row.created_at),
     hktDate: String(row.hkt_date),
-    result: row.result as ForecastResult
+    result: parseForecastResult(row.result)
   }));
 }
