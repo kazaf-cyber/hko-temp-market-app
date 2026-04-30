@@ -170,12 +170,10 @@ export default function HomePage() {
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [settlement, setSettlement] = useState<SettlementResult | null>(null);
-  const [polymarketUrl, setPolymarketUrl] = useState(
-  "https://polymarket.com/zh-hant/event/highest-temperature-in-hong-kong-on-may-1-2026"
-  );
+  const [polymarketUrl, setPolymarketUrl] = useState( "https://polymarket.com/zh-hant/event/highest-temperature-in-hong-kong-on-may-1-2026"
+);
 
   const [loadingPolymarket, setLoadingPolymarket] = useState(false);
-
   const [adminSecret, setAdminSecret] = useState("");
   const [outcomesJson, setOutcomesJson] = useState(
     JSON.stringify(defaultMarketState.outcomes, null, 2)
@@ -610,9 +608,9 @@ async function loadPolymarketOutcomes() {
 
     <p className="text-sm text-slate-400">
       讀取後會更新 outcomes JSON；之後再按「更新預測並儲存」重新計算概率。
-    </p>
-  </div>
-</div>
+       </p>
+     </div>
+     </div>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <label className="block">
               <span className="text-sm text-slate-300">
