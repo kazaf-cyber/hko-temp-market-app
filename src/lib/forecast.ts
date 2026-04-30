@@ -129,8 +129,9 @@ function getRemainingHeatingPotential(nowHour: number) {
 
 function getOfficialForecastMaxForToday(snapshot: HkoWeatherSnapshot) {
   const todayCompact = getHktDateCompact();
+  const days = snapshot.forecast.days;
 
-  const todayForecast = snapshot.forecast.days.find(
+  const todayForecast = days.find(
     (day) => day.forecastDate === todayCompact
   );
 
@@ -138,7 +139,7 @@ function getOfficialForecastMaxForToday(snapshot: HkoWeatherSnapshot) {
     return todayForecast.forecastMaxtempC;
   }
 
-  return snapshot.forecast.days[0]?.forecastMaxtempC ?? null;
+  return days[0]?.forecastMaxtempC ?? null;
 }
 
 function determineMaxSoFar(snapshot: HkoWeatherSnapshot, state: MarketState) {
