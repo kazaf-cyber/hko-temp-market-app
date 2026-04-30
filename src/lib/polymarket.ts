@@ -20,6 +20,7 @@ type GammaMarket = {
   clobTokenIds?: unknown;
   active?: boolean;
   closed?: boolean;
+  archived?: boolean;
   [key: string]: unknown;
 };
 
@@ -96,7 +97,14 @@ export function extractPolymarketSlug(input: string): string {
   return decodeURIComponent(cleaned.split("?")[0].split("#")[0]);
 }
 
-function outcomeRangeFromLabel(label: string): OutcomeRange {
+/**
+ * Convert labels like:
+ * - 19°C or below
+ * - 20°C
+ * - 29°C or higher
+ * into numeric buckets.
+ */
+function outcomeRangeFromTemperatureLabel(label: string): OutcomeRange {
   const match = label.match(/-?\d+(?:\.\d+)?/);
   const value = match ? Number(match[0]) : null;
 
@@ -141,6 +149,112 @@ function outcomeRangeFromLabel(label: string): OutcomeRange {
   };
 }
 
+/**
+ * Extract the temperature bucket from a binary Polymarket question.
+ *
+ * Examples:
+ * - "Will the highest temperature in Hong Kong be 19°C or below on May 1?"
+ *   -> "19°C or below"
+ *
+ * - "Will the highest temperature in Hong Kong be 22°C on May 1?"
+ *   -> "22°C"
+ *
+ * - "Will the highest temperature in Hong Kong be 29°C or higher on May 1?"
+ *   -> "29°C or higher"
+ */
+function extractTemperatureLabelFromQuestion(question: string): string | null {
+  const cleaned = question.replace(/\s+/g, " ").trim();
+
+  const patterns = [
+    /be\s+(-?\d+(?:\.\d+)?\s*°?\s*C\s+or\s+below)\s+on/i,
+    /be\s+(-?\d+(?:\.\d+)?\s*°?\s*C\s+or\s+lower)\s+on/i,
+    /be\s+(-?\d+(?:\.\d+)?\s*°?\s*C\s+or\s+higher)\s+on/i,
+    /be\s+(-?\d+(?:\.\d+)?\s*°?\s*C\s+or\s+above)\s+on/i,
+    /be\s+(-?\d+(?:\.\d+)?\s*°?\s*C)\s+on/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern);
+
+    if (match?.[1]) {
+      return normalizeTemperatureLabel(match[1]);
+    }
+  }
+
+  /**
+   * Fallback: find the first temp phrase anywhere in the question.
+   */
+  const fallback = cleaned.match(
+    /(-?\d+(?:\.\d+)?\s*°?\s*C(?:\s+or\s+(?:below|lower|higher|above))?)/i
+  );
+
+  if (fallback?.[1]) {
+    return normalizeTemperatureLabel(fallback[1]);
+  }
+
+  return null;
+}
+
+function normalizeTemperatureLabel(raw: string): string {
+  const normalized = raw
+    .replace(/\s+/g, " ")
+    .replace(/\s*°\s*C/i, "°C")
+    .trim();
+
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+
+  if (!match) {
+    return normalized;
+  }
+
+  const value = match[0];
+
+  if (/or\s+below/i.test(normalized) || /or\s+lower/i.test(normalized)) {
+    return `${value}°C or below`;
+  }
+
+  if (/or\s+higher/i.test(normalized) || /or\s+above/i.test(normalized)) {
+    return `${value}°C or higher`;
+  }
+
+  return `${value}°C`;
+}
+
+/**
+ * Some markets may have a useful bucket inside the slug:
+ * highest-temperature-in-hong-kong-on-may-1-2026-19corbelow
+ * highest-temperature-in-hong-kong-on-may-1-2026-29corhigher
+ *
+ * This is only a fallback. The question is preferred.
+ */
+function extractTemperatureLabelFromSlug(slug: string | undefined): string | null {
+  if (!slug) return null;
+
+  const lower = slug.toLowerCase();
+
+  const below = lower.match(/(-?\d+(?:\.\d+)?)c(?:or)?below/);
+  if (below?.[1]) {
+    return `${below[1]}°C or below`;
+  }
+
+  const lowerMatch = lower.match(/(-?\d+(?:\.\d+)?)c(?:or)?lower/);
+  if (lowerMatch?.[1]) {
+    return `${lowerMatch[1]}°C or below`;
+  }
+
+  const higher = lower.match(/(-?\d+(?:\.\d+)?)c(?:or)?higher/);
+  if (higher?.[1]) {
+    return `${higher[1]}°C or higher`;
+  }
+
+  const plain = lower.match(/(-?\d+(?:\.\d+)?)c(?:$|-)/);
+  if (plain?.[1]) {
+    return `${plain[1]}°C`;
+  }
+
+  return null;
+}
+
 async function fetchPolymarketEventBySlug(slug: string): Promise<GammaEvent> {
   const url = `${GAMMA_API}/events?slug=${encodeURIComponent(slug)}`;
 
@@ -167,19 +281,81 @@ async function fetchPolymarketEventBySlug(slug: string): Promise<GammaEvent> {
   return event as GammaEvent;
 }
 
-function selectPrimaryMarket(event: GammaEvent): GammaMarket {
-  const markets = Array.isArray(event.markets) ? event.markets : [];
+function getYesOutcomeIndex(market: GammaMarket): number {
+  const labels = parseMaybeJsonArray(market.outcomes).map((item) =>
+    String(item).toLowerCase()
+  );
 
-  if (markets.length === 0) {
-    throw new Error("Polymarket event has no markets.");
+  const yesIndex = labels.findIndex((label) => label === "yes");
+
+  return yesIndex >= 0 ? yesIndex : 0;
+}
+
+function parseBinaryTemperatureMarket(market: GammaMarket): OutcomeRange | null {
+  const question = market.question ?? "";
+  const labelFromQuestion = extractTemperatureLabelFromQuestion(question);
+  const labelFromSlug = extractTemperatureLabelFromSlug(market.slug);
+
+  const label = labelFromQuestion ?? labelFromSlug;
+
+  if (!label) {
+    return null;
   }
 
-  const multiOutcomeMarket = markets.find((market) => {
-    const outcomes = parseMaybeJsonArray(market.outcomes);
-    return outcomes.length >= 2;
-  });
+  const yesIndex = getYesOutcomeIndex(market);
+  const prices = parseMaybeJsonArray(market.outcomePrices).map(parsePrice);
+  const tokenIds = parseMaybeJsonArray(market.clobTokenIds).map((item) =>
+    item === null || item === undefined ? null : String(item)
+  );
 
-  return multiOutcomeMarket ?? markets[0];
+  const yesPrice = prices[yesIndex] ?? null;
+  const yesTokenId = tokenIds[yesIndex] ?? null;
+
+  const range = outcomeRangeFromTemperatureLabel(label);
+
+  return {
+    ...range,
+    marketPrice: yesPrice,
+    price: yesPrice,
+    tokenId: yesTokenId,
+    clobTokenId: yesTokenId,
+    question: market.question ?? null,
+    marketSlug: market.slug ?? null
+  };
+}
+
+function sortTemperatureOutcomes(outcomes: OutcomeRange[]): OutcomeRange[] {
+  return [...outcomes].sort((a, b) => {
+    const aKey =
+      typeof a.lower === "number"
+        ? a.lower
+        : typeof a.upper === "number"
+          ? a.upper - 1
+          : Number.POSITIVE_INFINITY;
+
+    const bKey =
+      typeof b.lower === "number"
+        ? b.lower
+        : typeof b.upper === "number"
+          ? b.upper - 1
+          : Number.POSITIVE_INFINITY;
+
+    return aKey - bKey;
+  });
+}
+
+function dedupeOutcomes(outcomes: OutcomeRange[]): OutcomeRange[] {
+  const map = new Map<string, OutcomeRange>();
+
+  for (const outcome of outcomes) {
+    const key = `${outcome.name}|${outcome.lower ?? ""}|${outcome.upper ?? ""}`;
+
+    if (!map.has(key)) {
+      map.set(key, outcome);
+    }
+  }
+
+  return [...map.values()];
 }
 
 export async function getPolymarketOutcomesFromInput(
@@ -187,40 +363,36 @@ export async function getPolymarketOutcomesFromInput(
 ): Promise<PolymarketParsedEvent> {
   const slug = extractPolymarketSlug(input);
   const event = await fetchPolymarketEventBySlug(slug);
-  const market = selectPrimaryMarket(event);
+  const markets = Array.isArray(event.markets) ? event.markets : [];
 
-  const labels = parseMaybeJsonArray(market.outcomes).map((item) =>
-    String(item)
-  );
-
-  const prices = parseMaybeJsonArray(market.outcomePrices).map(parsePrice);
-  const tokenIds = parseMaybeJsonArray(market.clobTokenIds).map((item) =>
-    item === null || item === undefined ? null : String(item)
-  );
-
-  if (labels.length === 0) {
-    throw new Error("No outcomes found in Polymarket market.");
+  if (markets.length === 0) {
+    throw new Error("Polymarket event has no markets.");
   }
 
-  const outcomes: OutcomeRange[] = labels.map((label, index) => {
-    const range = outcomeRangeFromLabel(label);
-    const marketPrice = prices[index] ?? null;
-    const tokenId = tokenIds[index] ?? null;
+  /**
+   * This event is a bundle of binary markets.
+   * Do NOT parse the first market's Yes/No as temperature outcomes.
+   * Instead, parse every market's question and use YES price.
+   */
+  const binaryTemperatureOutcomes = markets
+    .map(parseBinaryTemperatureMarket)
+    .filter((item): item is OutcomeRange => item !== null);
 
-    return {
-      ...range,
-      marketPrice,
-      price: marketPrice,
-      tokenId,
-      clobTokenId: tokenId
-    };
-  });
+  const outcomes = sortTemperatureOutcomes(
+    dedupeOutcomes(binaryTemperatureOutcomes)
+  );
+
+  if (outcomes.length === 0) {
+    throw new Error(
+      "No temperature outcomes could be parsed from Polymarket event markets."
+    );
+  }
 
   return {
     slug,
     eventTitle: event.title ?? null,
-    marketQuestion: market.question ?? null,
-    marketSlug: market.slug ?? null,
+    marketQuestion: event.title ?? null,
+    marketSlug: null,
     outcomes
   };
 }
