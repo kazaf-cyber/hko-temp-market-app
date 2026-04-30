@@ -4,8 +4,7 @@ export type RainIntensity =
   | "moderate"
   | "heavy"
   | "violent"
-  | "thunderstorm"
-  | string;
+  | "thunderstorm";
 
 export type HkoCurrent = {
   hkoCurrentTempC?: number | null;
