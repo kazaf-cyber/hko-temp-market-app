@@ -1847,6 +1847,55 @@ function normalizeForecastResultForPage(
     maxSoFarC,
     maxSoFarSource
   });
+  
+  const hkoCurrentTempC = firstNumber(
+    forecastRecord.hkoCurrentTempC,
+    forecastRecord.currentTempC,
+    forecastRecord.currentTemperatureC,
+    getAt(forecastRecord, ["hko", "currentTempC"]),
+    getAt(forecastRecord, ["hko", "hkoCurrentTempC"]),
+
+    getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]),
+    getAt(weatherForDisplay, ["current", "currentTempC"]),
+    getAt(weatherForDisplay, ["current", "currentTemperatureC"]),
+    getAt(weatherForDisplay, ["current", "temperatureC"]),
+    getAt(weatherForDisplay, ["current", "tempC"]),
+
+    getAt(weatherForDisplay, ["hkoCurrentTempC"]),
+    getAt(weatherForDisplay, ["currentTempC"]),
+    getAt(weatherForDisplay, ["currentTemperatureC"]),
+    getAt(weatherForDisplay, ["temperatureC"]),
+
+    getAt(weatherForDisplay, ["hko", "currentTempC"]),
+    getAt(weatherForDisplay, ["hko", "hkoCurrentTempC"])
+  );
+
+  const hkoMaxSinceMidnightC = firstNumber(
+    getAt(weatherForDisplay, ["sinceMidnight", "maxTempC"]),
+    getAt(weatherForDisplay, ["sinceMidnight", "maxTemperatureC"]),
+    getAt(weatherForDisplay, ["sinceMidnight", "maxTemp"]),
+    getAt(weatherForDisplay, ["sinceMidnight", "maxTemperature"]),
+
+    getAt(weatherForDisplay, ["hkoMaxSinceMidnightC"]),
+    getAt(weatherForDisplay, ["maxSinceMidnightC"]),
+    getAt(weatherForDisplay, ["maxSoFarC"]),
+    getAt(weatherForDisplay, ["observedMaxSoFarC"]),
+    getAt(weatherForDisplay, ["observedMaxLowerBoundC"]),
+    getAt(weatherForDisplay, ["observedFinalMaxLowerBoundC"]),
+
+    getAt(weatherForDisplay, ["hko", "maxSinceMidnightC"]),
+    getAt(weatherForDisplay, ["hko", "hkoMaxSinceMidnightC"]),
+
+    forecastRecord.hkoMaxSinceMidnightC,
+    forecastRecord.maxSinceMidnightC,
+    forecastRecord.maxSoFarC,
+    forecastRecord.observedMaxSoFarC,
+    forecastRecord.observedMaxLowerBoundC,
+    forecastRecord.observedFinalMaxLowerBoundC,
+
+    maxSoFarC
+  );
+  
  const hkoCurrentTempC = firstNumber(
     getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]),
     getAt(weatherForDisplay, ["current", "currentTempC"]),
