@@ -398,10 +398,7 @@ export async function GET(request: Request) {
     const blendMarket = parseBoolean(url.searchParams.get("blendMarket"), true);
     const debug = parseBoolean(url.searchParams.get("debug"), false);
 
-    const ai =
-      parseBoolean(url.searchParams.get("ai"), false) ||
-      parseBoolean(url.searchParams.get("explain"), false) ||
-      parseBoolean(url.searchParams.get("forceAI"), false);
+    const ai = true;
 
     const marketWeightOverride = parseNumber(
       url.searchParams.get("marketWeight")
@@ -470,10 +467,7 @@ export async function POST(request: Request) {
 
       Your page.tsx seems to send forceAI, so we support all three.
     */
-    const ai =
-      parseBoolean(body.ai, false) ||
-      parseBoolean(body.explain, false) ||
-      parseBoolean(body.forceAI, false);
+    const ai = true;
 
     /*
       Frontend sends:
