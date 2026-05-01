@@ -20,11 +20,30 @@ export type MultiChannelDerivedSignals = {
   cloudCoverNowPct: number | null;
   observedHourlyRainfallMm: number | null;
   clobMidpoints: Array<{
-    outcomeName: string;
-    midpoint: number | null;
-    spread: number | null;
-    gammaPrice: number | null;
-  }>;
+  outcomeName: string;
+
+  /**
+   * Preferred market probability from CLOB.
+   */
+  midpoint: number | null;
+
+  /**
+   * CLOB spread.
+   */
+  spread: number | null;
+
+  /**
+   * Backward-compatible alias for Gamma YES price.
+   */
+  gammaPrice: number | null;
+
+  gammaYesPrice: number | null;
+  gammaNoPrice: number | null;
+
+  yesAsk: number | null;
+  noAsk: number | null;
+  yesBid: number | null;
+}>;
 };
 
 export type MultiChannelSnapshot = {
@@ -106,12 +125,30 @@ function deriveSignals(params: {
   ]);
 
   const clobMidpoints =
-    params.polymarketClob?.outcomes.map((item) => ({
-      outcomeName: item.outcomeName,
-      midpoint: item.midpoint,
-      spread: item.spread,
-      gammaPrice: item.gammaPrice
-    })) ?? [];
+  params.polymarketClob?.outcomes.map((item) => ({
+    outcomeName: item.outcomeName,
+
+    /**
+     * Preferred Polymarket probability.
+     */
+    midpoint: item.midpoint,
+
+    spread: item.spread,
+
+    /**
+     * Compatibility alias:
+     * old code may expect gammaPrice, but new CLOB parser separates
+     * Gamma YES and Gamma NO prices.
+     */
+    gammaPrice: item.gammaYesPrice,
+
+    gammaYesPrice: item.gammaYesPrice,
+    gammaNoPrice: item.gammaNoPrice,
+
+    yesAsk: item.yesAsk,
+    noAsk: item.noAsk,
+    yesBid: item.yesBid
+  })) ?? [];
 
   const hkoCurrentTempC = params.hko.current.hkoCurrentTempC ?? null;
 const hkoMaxSoFarC =
