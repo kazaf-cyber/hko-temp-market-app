@@ -188,7 +188,7 @@ function pickHkoStationValue(
   }
 
   const exactHkoStation = data.find((item) =>
-    (item.place ?? "").toLowerCase().includes("hong kong observatory")
+    (item.place ?? "").toLowerCase().includes("HK Observatory")
   );
 
   const selected = exactHkoStation ?? data[0];
@@ -208,7 +208,7 @@ function findHkoRow(rows: string[][]) {
     row.some((cell) => {
       const lower = cell.toLowerCase();
       return (
-        lower.includes("hong kong observatory") ||
+        lower.includes("HK Observatory") ||
         lower === "hko" ||
         cell.includes("香港天文台")
       );
@@ -284,7 +284,7 @@ export async function getHkoSinceMidnightMaxMin(): Promise<HkoSinceMidnightMaxMi
   const timeCells = extractTimeCells(row);
 
   return {
-    stationName: "Hong Kong Observatory",
+    stationName: "HK Observatory",
     maxTempC: numericValues[0] ?? null,
     maxTempTime: timeCells[0] ?? null,
     minTempC: numericValues[1] ?? null,
@@ -304,7 +304,7 @@ export async function getHkoHourlyRainfall(): Promise<HkoHourlyRainfall | null> 
       raw.hourlyRainfall?.find((item) =>
         (item.automaticWeatherStation ?? "")
           .toLowerCase()
-          .includes("hong kong observatory")
+          .includes("HK Observatory")
       ) ?? null;
 
     if (!row) {
@@ -396,7 +396,7 @@ export async function getHkoSettlementMax(
       return {
         date: dateCompact,
         stationCode: "HKO",
-        stationName: "Hong Kong Observatory",
+        stationName: "HK Observatory",
         officialMaxTempC: getNestedNumericValue(raw[key]),
         rawKey: key,
         available: getNestedNumericValue(raw[key]) !== null,
@@ -418,7 +418,7 @@ export async function getHkoSettlementMax(
     return {
       date: dateCompact,
       stationCode: "HKO",
-      stationName: "Hong Kong Observatory",
+      stationName: "HK Observatory",
       officialMaxTempC: parsed,
       rawKey: key,
       available: parsed !== null,
@@ -430,7 +430,7 @@ export async function getHkoSettlementMax(
   return {
     date: dateCompact,
     stationCode: "HKO",
-    stationName: "Hong Kong Observatory",
+    stationName: "HK Observatory",
     officialMaxTempC: null,
     rawKey: null,
     available: false,
