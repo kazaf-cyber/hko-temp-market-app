@@ -74,7 +74,65 @@ function formatTemp(value: number | null | undefined) {
 
   return `${value.toFixed(1)}°C`;
 }
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
+function readPath(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+
+  for (const key of path) {
+    if (!isPlainRecord(current)) {
+      return undefined;
+    }
+
+    current = current[key];
+  }
+
+  return current;
+}
+
+function numberFromUnknown(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const match = value.trim().match(/-?\d+(?:\.\d+)?/);
+
+    if (!match) {
+      return null;
+    }
+
+    const parsed = Number(match[0]);
+
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function firstDisplayNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = numberFromUnknown(value);
+
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function firstNonEmptyString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return null;
+}
 function formatPercent(value: number | null | undefined) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "--";
@@ -205,6 +263,101 @@ export default function HomePage() {
     [weather]
   );
 
+  const hkoCurrentTempC = useMemo(
+    () =>
+      firstDisplayNumber(
+        readPath(weather, ["current", "hkoCurrentTempC"]),
+        readPath(weather, ["current", "currentTempC"]),
+        readPath(weather, ["current", "temperatureC"]),
+        readPath(weather, ["current", "tempC"]),
+        readPath(weather, ["hkoCurrentTempC"]),
+        readPath(weather, ["currentTempC"]),
+        readPath(weather, ["temperatureC"]),
+        readPath(weather, ["hko", "currentTempC"]),
+        readPath(weather, ["hko", "hkoCurrentTempC"]),
+
+        readPath(forecast, ["hkoCurrentTempC"]),
+        readPath(forecast, ["weather", "current", "hkoCurrentTempC"]),
+        readPath(forecast, ["weather", "hkoCurrentTempC"]),
+        readPath(forecast, ["hko", "currentTempC"])
+      ),
+    [weather, forecast]
+  );
+
+  const hkoMaxSinceMidnightC = useMemo(
+    () =>
+      firstDisplayNumber(
+        readPath(weather, ["sinceMidnight", "maxTempC"]),
+        readPath(weather, ["sinceMidnight", "maxTemperatureC"]),
+        readPath(weather, ["hkoMaxSinceMidnightC"]),
+        readPath(weather, ["maxSinceMidnightC"]),
+        readPath(weather, ["maxSoFarC"]),
+        readPath(weather, ["observedMaxSoFarC"]),
+        readPath(weather, ["observedMaxLowerBoundC"]),
+        readPath(weather, ["observedFinalMaxLowerBoundC"]),
+        readPath(weather, ["hko", "maxSinceMidnightC"]),
+        readPath(weather, ["hko", "hkoMaxSinceMidnightC"]),
+
+        readPath(forecast, ["hkoMaxSinceMidnightC"]),
+        readPath(forecast, ["maxSoFarC"]),
+        readPath(forecast, ["observedMaxLowerBoundC"]),
+        readPath(forecast, ["observedFinalMaxLowerBoundC"]),
+        readPath(forecast, ["weather", "sinceMidnight", "maxTempC"]),
+        readPath(forecast, ["weather", "hkoMaxSinceMidnightC"]),
+        readPath(forecast, ["hko", "maxSinceMidnightC"])
+      ),
+    [weather, forecast]
+  );
+
+  const hkoMinSinceMidnightC = useMemo(
+    () =>
+      firstDisplayNumber(
+        readPath(weather, ["sinceMidnight", "minTempC"]),
+        readPath(weather, ["sinceMidnight", "minTemperatureC"]),
+        readPath(weather, ["hkoMinSinceMidnightC"]),
+        readPath(weather, ["minSinceMidnightC"]),
+        readPath(forecast, ["weather", "sinceMidnight", "minTempC"]),
+        readPath(forecast, ["weather", "hkoMinSinceMidnightC"])
+      ),
+    [weather, forecast]
+  );
+
+  const hkoCurrentRecordTime = useMemo(
+    () =>
+      firstNonEmptyString(
+        readPath(weather, ["current", "recordTime"]),
+        readPath(weather, ["current", "obsTime"]),
+        readPath(weather, ["recordTime"]),
+        readPath(weather, ["obsTime"]),
+        readPath(forecast, ["weather", "current", "recordTime"]),
+        readPath(forecast, ["generatedAt"])
+      ),
+    [weather, forecast]
+  );
+
+  const hkoMaxSinceMidnightTime = useMemo(
+    () =>
+      firstNonEmptyString(
+        readPath(weather, ["sinceMidnight", "maxTempTime"]),
+        readPath(weather, ["sinceMidnight", "maxTime"]),
+        readPath(weather, ["maxTempTime"]),
+        readPath(forecast, ["weather", "sinceMidnight", "maxTempTime"]),
+        readPath(forecast, ["generatedAt"])
+      ),
+    [weather, forecast]
+  );
+
+  const hkoMinSinceMidnightTime = useMemo(
+    () =>
+      firstNonEmptyString(
+        readPath(weather, ["sinceMidnight", "minTempTime"]),
+        readPath(weather, ["sinceMidnight", "minTime"]),
+        readPath(weather, ["minTempTime"]),
+        readPath(forecast, ["weather", "sinceMidnight", "minTempTime"])
+      ),
+    [weather, forecast]
+  );
+  
   function updateState(partial: Partial<MarketState>) {
     setState((previous) => ({
       ...previous,
@@ -539,22 +692,22 @@ setMessage(nextMessage);
         )}
 
         <section className="grid gap-4 md:grid-cols-5">
-          <Card
+         <Card
             label="HKO Current Temp"
-            value={formatTemp(weather?.current?.hkoCurrentTempC)}
-            sub={`Record: ${weather?.current?.recordTime ?? "--"}`}
+            value={formatTemp(hkoCurrentTempC)}
+            sub={`Record: ${hkoCurrentRecordTime ?? "--"}`}
           />
 
           <Card
             label="HKO Max Since Midnight"
-            value={formatTemp(weather?.sinceMidnight?.maxTempC)}
-            sub={`Time: ${weather?.sinceMidnight?.maxTempTime ?? "--"}`}
+            value={formatTemp(hkoMaxSinceMidnightC)}
+            sub={`Time: ${hkoMaxSinceMidnightTime ?? "--"}`}
           />
 
           <Card
             label="HKO Min Since Midnight"
-            value={formatTemp(weather?.sinceMidnight?.minTempC)}
-            sub={`Time: ${weather?.sinceMidnight?.minTempTime ?? "--"}`}
+            value={formatTemp(hkoMinSinceMidnightC)}
+            sub={`Time: ${hkoMinSinceMidnightTime ?? "--"}`}
           />
 
           <Card
@@ -825,12 +978,29 @@ setMessage(nextMessage);
 
                 <tbody>
                   {(state.outcomes ?? []).map((outcome) => {
-                    const probability =
+                    const forecastOutcome =
                       forecast?.outcomeProbabilities?.find(
                         (item) => item.name === outcome.name
-                      )?.probability ?? null;
+                      ) ?? null;
 
-                    const marketPrice = getOutcomeMarketPrice(outcome);
+                    const probability = firstDisplayNumber(
+                      readPath(forecastOutcome, ["probability"]),
+                      readPath(forecastOutcome, ["modelProbability"]),
+                      readPath(forecastOutcome, ["weatherProbability"]),
+                      readPath(forecastOutcome, ["forecastProbability"])
+                    );
+
+                    const marketPrice =
+                      getOutcomeMarketPrice(outcome) ??
+                      firstDisplayNumber(
+                        readPath(forecastOutcome, ["marketProbability"]),
+                        readPath(forecastOutcome, ["polymarketProbability"]),
+                        readPath(forecastOutcome, ["marketPrice"]),
+                        readPath(forecastOutcome, ["price"]),
+                        readPath(forecastOutcome, ["clobMidpoint"]),
+                        readPath(forecastOutcome, ["yesPrice"]),
+                        readPath(forecastOutcome, ["lastPrice"])
+                      );
 
                     const edge =
                       typeof probability === "number" &&
