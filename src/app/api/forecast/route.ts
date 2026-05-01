@@ -233,7 +233,7 @@ async function saveHistoryIfRequested(params: {
     return await saveForecastRun({
       hktDate: getForecastHktDate(params.forecast),
       state: params.state,
-      weather: params.forecast.weather as HkoWeatherSnapshot,
+      weather: params.forecast.weather as unknown as HkoWeatherSnapshot,
       result: resultForHistory
     });
   } catch (error) {
