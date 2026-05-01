@@ -93,6 +93,10 @@ function formatSignedPercent(value: number | null | undefined) {
 }
 
 function getOutcomeMarketPrice(outcome: MarketState["outcomes"][number]) {
+  if (typeof outcome.clobMidpoint === "number") {
+    return outcome.clobMidpoint;
+  }
+
   if (typeof outcome.marketPrice === "number") {
     return outcome.marketPrice;
   }
