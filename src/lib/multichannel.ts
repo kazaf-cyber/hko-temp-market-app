@@ -186,21 +186,31 @@ export async function getMultiChannelSnapshot(params?: {
   let polymarketClob: PolymarketClobSnapshot | null = null;
 
   if (params?.includeClob) {
-    try {
-      const outcomes =
-        params.outcomes ?? (await getMarketState()).state.outcomes;
+  try {
+    let outcomes = params.outcomes;
 
-      polymarketClob = await getPolymarketClobSnapshot(outcomes);
-    } catch (error) {
-      errors.push({
-        source: "polymarket-clob",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unknown Polymarket CLOB error"
-      });
+    if (!outcomes && params.polymarketUrl) {
+      const polymarket = await getPolymarketOutcomesFromInput(
+        params.polymarketUrl
+      );
+      outcomes = polymarket.outcomes;
     }
+
+    if (!outcomes) {
+      outcomes = (await getMarketState()).state.outcomes;
+    }
+
+    polymarketClob = await getPolymarketClobSnapshot(outcomes);
+  } catch (error) {
+    errors.push({
+      source: "polymarket-clob",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unknown Polymarket CLOB error"
+    });
   }
+}
 
   const derived = deriveSignals({
     hko,
