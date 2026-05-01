@@ -11,9 +11,15 @@ export async function GET(request: Request) {
       url.searchParams.get("includeClob") === "1" ||
       url.searchParams.get("includeClob") === "true";
 
-    const data = await getMultiChannelSnapshot({
-      includeClob
-    });
+    const polymarketUrl =
+  url.searchParams.get("polymarketUrl") ??
+  url.searchParams.get("url") ??
+  null;
+
+const data = await getMultiChannelSnapshot({
+  includeClob,
+  polymarketUrl
+});
 
     return NextResponse.json({
       ok: true,
