@@ -58,6 +58,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
 function parseMarketState(value: unknown): MarketState | null {
   if (!isRecord(value)) {
     return null;
@@ -79,6 +83,136 @@ function getStringField(
   }
 
   return null;
+}
+
+function asString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  return trimmed ? trimmed : null;
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const parsed = asString(value);
+
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value.trim().replace(/%/g, "");
+
+    if (!cleaned) {
+      return null;
+    }
+
+    const parsed = Number(cleaned);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = toFiniteNumber(value);
+
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function getAt(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+
+  for (const key of path) {
+    if (Array.isArray(current)) {
+      const index = Number(key);
+
+      if (!Number.isInteger(index)) {
+        return undefined;
+      }
+
+      current = current[index];
+      continue;
+    }
+
+    if (!isRecord(current)) {
+      return undefined;
+    }
+
+    current = current[key];
+  }
+
+  return current;
+}
+
+function probabilityFromValue(value: unknown): number | null {
+  const parsed = toFiniteNumber(value);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  /*
+    Accept both formats:
+
+      0.81 -> 0.81
+      81   -> 0.81
+      81%  -> 0.81
+
+    page.tsx formatPercent() expects probability in 0..1 format.
+  */
+  if (parsed >= 0 && parsed <= 1) {
+    return parsed;
+  }
+
+  if (parsed > 1 && parsed <= 100) {
+    return parsed / 100;
+  }
+
+  return null;
+}
+
+function firstProbability(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = probabilityFromValue(value);
+
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function stringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return value.filter(
+    (item): item is string => typeof item === "string" && item.trim() !== ""
+  );
 }
 
 function formatHktDate(date: Date) {
@@ -144,45 +278,548 @@ function getAiExplanationText(aiCommentary: AiCommentary): string | null {
   }
 
   if (typeof aiCommentary === "string") {
-    return aiCommentary;
+    return aiCommentary.trim() ? aiCommentary : null;
   }
 
   if (isRecord(aiCommentary)) {
-    const directText = getStringField(aiCommentary, [
-      "text",
-      "summary",
-      "explanation",
-      "commentary",
-      "content",
-      "message"
-    ]);
+    const directText = firstString(
+      aiCommentary.aiExplanation,
+      aiCommentary.text,
+      aiCommentary.summary,
+      aiCommentary.explanation,
+      aiCommentary.commentary,
+      aiCommentary.content,
+      aiCommentary.message,
+
+      /*
+        Common nested response shapes.
+      */
+      getAt(aiCommentary, ["data", "aiExplanation"]),
+      getAt(aiCommentary, ["data", "text"]),
+      getAt(aiCommentary, ["data", "summary"]),
+      getAt(aiCommentary, ["data", "explanation"]),
+      getAt(aiCommentary, ["data", "commentary"]),
+      getAt(aiCommentary, ["data", "content"]),
+      getAt(aiCommentary, ["result", "aiExplanation"]),
+      getAt(aiCommentary, ["result", "text"]),
+      getAt(aiCommentary, ["result", "summary"]),
+      getAt(aiCommentary, ["result", "explanation"]),
+      getAt(aiCommentary, ["result", "commentary"]),
+      getAt(aiCommentary, ["result", "content"]),
+      getAt(aiCommentary, ["choices", "0", "message", "content"]),
+      getAt(aiCommentary, ["message", "content"])
+    );
 
     if (directText) {
       return directText;
     }
   }
 
+  /*
+    If Poe returns an unexpected object, show it rather than silently
+    displaying "AI explanation disabled or not available."
+  */
   try {
-    return JSON.stringify(aiCommentary);
+    const serialized = JSON.stringify(aiCommentary, null, 2);
+
+    if (serialized && serialized !== "{}" && serialized !== "null") {
+      return serialized;
+    }
   } catch {
-    return String(aiCommentary);
+    const fallback = String(aiCommentary);
+
+    if (fallback && fallback !== "[object Object]") {
+      return fallback;
+    }
   }
+
+  return null;
+}
+
+function normalizeOutcomeForPage(
+  value: unknown,
+  index: number
+): Record<string, unknown> {
+  const row = recordOrEmpty(value);
+
+  const name =
+    firstString(row.name, row.outcome, row.label, row.title) ??
+    `Outcome ${index + 1}`;
+
+  const lower = firstNumber(row.lower, row.min, row.from);
+  const upper = firstNumber(row.upper, row.max, row.to);
+
+  /*
+    IMPORTANT:
+    page.tsx expects forecast.outcomeProbabilities[].probability to be
+    model/weather probability in 0..1 format.
+
+    Prefer model/weather fields first. Only fall back to generic probability.
+  */
+  const modelProbability = firstProbability(
+    row.weatherProbability,
+    row.modelProbability,
+    row.forecastProbability,
+    row.weatherProbabilityPct,
+    row.modelProbabilityPct,
+    row.forecastProbabilityPct,
+    getAt(row, ["model", "probability"]),
+    getAt(row, ["model", "probabilityPct"]),
+    getAt(row, ["model", "weatherProbability"]),
+    getAt(row, ["model", "weatherProbabilityPct"]),
+    row.probability,
+    row.probabilityPct
+  );
+
+  const marketProbability = firstProbability(
+    row.marketProbability,
+    row.polymarketProbability,
+    row.marketPrice,
+    row.price,
+    row.clobMidpoint,
+    row.marketProbabilityPct,
+    row.polymarketProbabilityPct,
+    row.marketPct,
+    row.polymarketPct
+  );
+
+  const edge =
+    modelProbability !== null && marketProbability !== null
+      ? modelProbability - marketProbability
+      : null;
+
+  return {
+    ...row,
+
+    name,
+    lower,
+    upper,
+
+    /*
+      Shape expected by page.tsx.
+    */
+    probability: modelProbability,
+    probabilityPct:
+      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
+
+    /*
+      Aliases for other UI / future code.
+    */
+    modelProbability,
+    modelProbabilityPct:
+      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
+    weatherProbability: modelProbability,
+    weatherProbabilityPct:
+      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
+    forecastProbability: modelProbability,
+    forecastProbabilityPct:
+      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
+
+    marketProbability,
+    marketProbabilityPct:
+      marketProbability === null
+        ? null
+        : Math.round(marketProbability * 10000) / 100,
+    polymarketProbability: marketProbability,
+    polymarketProbabilityPct:
+      marketProbability === null
+        ? null
+        : Math.round(marketProbability * 10000) / 100,
+
+    edge,
+    edgePct: edge === null ? null : Math.round(edge * 10000) / 100
+  };
+}
+
+function getOutcomePoint(row: Record<string, unknown>): number | null {
+  const lower = firstNumber(row.lower);
+  const upper = firstNumber(row.upper);
+
+  if (lower !== null && upper !== null) {
+    return (lower + upper) / 2;
+  }
+
+  if (lower !== null && upper === null) {
+    return lower + 0.5;
+  }
+
+  if (lower === null && upper !== null) {
+    return upper - 0.5;
+  }
+
+  return null;
+}
+
+function deriveEstimatedFinalMaxCFromOutcomes(
+  outcomeProbabilities: Record<string, unknown>[]
+) {
+  const weightedPoints = outcomeProbabilities
+    .map((row) => {
+      const point = getOutcomePoint(row);
+      const probability = probabilityFromValue(row.probability);
+
+      return {
+        point,
+        probability
+      };
+    })
+    .filter(
+      (
+        item
+      ): item is {
+        point: number;
+        probability: number;
+      } => item.point !== null && item.probability !== null
+    )
+    .sort((a, b) => a.point - b.point);
+
+  const total = weightedPoints.reduce(
+    (sum, item) => sum + Math.max(0, item.probability),
+    0
+  );
+
+  if (!weightedPoints.length || total <= 0) {
+    return {
+      p10: null,
+      p25: null,
+      median: null,
+      p50: null,
+      p75: null,
+      p90: null
+    };
+  }
+
+  function quantile(q: number): number | null {
+    const target = q * total;
+    let cumulative = 0;
+
+    for (const item of weightedPoints) {
+      cumulative += Math.max(0, item.probability);
+
+      if (cumulative >= target) {
+        return item.point;
+      }
+    }
+
+    return weightedPoints[weightedPoints.length - 1]?.point ?? null;
+  }
+
+  const p10 = quantile(0.1);
+  const p25 = quantile(0.25);
+  const median = quantile(0.5);
+  const p75 = quantile(0.75);
+  const p90 = quantile(0.9);
+
+  return {
+    p10,
+    p25,
+    median,
+    p50: median,
+    p75,
+    p90
+  };
+}
+
+function buildEstimatedFinalMaxCForPage(
+  forecastRecord: Record<string, unknown>,
+  outcomeProbabilities: Record<string, unknown>[]
+) {
+  const derived = deriveEstimatedFinalMaxCFromOutcomes(outcomeProbabilities);
+
+  const p10 =
+    firstNumber(
+      getAt(forecastRecord, ["estimatedFinalMaxC", "p10"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p10"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMax", "p10"]),
+      getAt(forecastRecord, ["estimatedFinalMax", "p10"]),
+      getAt(forecastRecord, ["finalDailyMax", "p10"]),
+      getAt(forecastRecord, ["percentiles", "p10"]),
+      getAt(forecastRecord, ["quantiles", "p10"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p10"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p10"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p10"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMax", "p10"]),
+      getAt(forecastRecord, ["model", "percentiles", "p10"]),
+      getAt(forecastRecord, ["model", "quantiles", "p10"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p10"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p10"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p10"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p10"]),
+      getAt(forecastRecord, ["diagnostics", "percentiles", "p10"]),
+      getAt(forecastRecord, ["diagnostics", "quantiles", "p10"])
+    ) ?? derived.p10;
+
+  const p25 =
+    firstNumber(
+      getAt(forecastRecord, ["estimatedFinalMaxC", "p25"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p25"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMax", "p25"]),
+      getAt(forecastRecord, ["estimatedFinalMax", "p25"]),
+      getAt(forecastRecord, ["finalDailyMax", "p25"]),
+      getAt(forecastRecord, ["percentiles", "p25"]),
+      getAt(forecastRecord, ["quantiles", "p25"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p25"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p25"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p25"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMax", "p25"]),
+      getAt(forecastRecord, ["model", "percentiles", "p25"]),
+      getAt(forecastRecord, ["model", "quantiles", "p25"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p25"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p25"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p25"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p25"]),
+      getAt(forecastRecord, ["diagnostics", "percentiles", "p25"]),
+      getAt(forecastRecord, ["diagnostics", "quantiles", "p25"])
+    ) ?? derived.p25;
+
+  const median =
+    firstNumber(
+      getAt(forecastRecord, ["estimatedFinalMaxC", "median"]),
+      getAt(forecastRecord, ["estimatedFinalMaxC", "p50"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "median"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p50"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMax", "median"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMax", "p50"]),
+      getAt(forecastRecord, ["estimatedFinalMax", "median"]),
+      getAt(forecastRecord, ["estimatedFinalMax", "p50"]),
+      getAt(forecastRecord, ["finalDailyMax", "median"]),
+      getAt(forecastRecord, ["finalDailyMax", "p50"]),
+      getAt(forecastRecord, ["percentiles", "median"]),
+      getAt(forecastRecord, ["percentiles", "p50"]),
+      getAt(forecastRecord, ["quantiles", "median"]),
+      getAt(forecastRecord, ["quantiles", "p50"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "median"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p50"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "median"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p50"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "median"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p50"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMax", "median"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMax", "p50"]),
+      getAt(forecastRecord, ["model", "percentiles", "median"]),
+      getAt(forecastRecord, ["model", "percentiles", "p50"]),
+      getAt(forecastRecord, ["model", "quantiles", "median"]),
+      getAt(forecastRecord, ["model", "quantiles", "p50"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "median"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p50"]),
+      getAt(forecastRecord, [
+        "diagnostics",
+        "estimatedFinalDailyMaxC",
+        "median"
+      ]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p50"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "median"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p50"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "median"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p50"]),
+      getAt(forecastRecord, ["diagnostics", "percentiles", "median"]),
+      getAt(forecastRecord, ["diagnostics", "percentiles", "p50"]),
+      getAt(forecastRecord, ["diagnostics", "quantiles", "median"]),
+      getAt(forecastRecord, ["diagnostics", "quantiles", "p50"])
+    ) ?? derived.median;
+
+  const p75 =
+    firstNumber(
+      getAt(forecastRecord, ["estimatedFinalMaxC", "p75"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p75"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMax", "p75"]),
+      getAt(forecastRecord, ["estimatedFinalMax", "p75"]),
+      getAt(forecastRecord, ["finalDailyMax", "p75"]),
+      getAt(forecastRecord, ["percentiles", "p75"]),
+      getAt(forecastRecord, ["quantiles", "p75"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p75"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p75"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p75"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMax", "p75"]),
+      getAt(forecastRecord, ["model", "percentiles", "p75"]),
+      getAt(forecastRecord, ["model", "quantiles", "p75"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p75"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p75"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p75"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p75"]),
+      getAt(forecastRecord, ["diagnostics", "percentiles", "p75"]),
+      getAt(forecastRecord, ["diagnostics", "quantiles", "p75"])
+    ) ?? derived.p75;
+
+  const p90 =
+    firstNumber(
+      getAt(forecastRecord, ["estimatedFinalMaxC", "p90"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p90"]),
+      getAt(forecastRecord, ["estimatedFinalDailyMax", "p90"]),
+      getAt(forecastRecord, ["estimatedFinalMax", "p90"]),
+      getAt(forecastRecord, ["finalDailyMax", "p90"]),
+      getAt(forecastRecord, ["percentiles", "p90"]),
+      getAt(forecastRecord, ["quantiles", "p90"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p90"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p90"]),
+      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p90"]),
+      getAt(forecastRecord, ["model", "estimatedFinalMax", "p90"]),
+      getAt(forecastRecord, ["model", "percentiles", "p90"]),
+      getAt(forecastRecord, ["model", "quantiles", "p90"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p90"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p90"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p90"]),
+      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p90"]),
+      getAt(forecastRecord, ["diagnostics", "percentiles", "p90"]),
+      getAt(forecastRecord, ["diagnostics", "quantiles", "p90"])
+    ) ?? derived.p90;
+
+  return {
+    p10,
+    p25,
+    median,
+    p50: median,
+    p75,
+    p90
+  };
+}
+
+function normalizeForecastResultForPage(
+  forecast: Forecast,
+  aiCommentary: AiCommentary
+): ForecastResult {
+  const forecastRecord = recordOrEmpty(forecast);
+
+  const rawOutcomes = Array.isArray(forecastRecord.outcomes)
+    ? forecastRecord.outcomes
+    : Array.isArray(forecastRecord.probabilities)
+      ? forecastRecord.probabilities
+      : Array.isArray(forecastRecord.outcomeProbabilities)
+        ? forecastRecord.outcomeProbabilities
+        : [];
+
+  const outcomeProbabilities = rawOutcomes.map(normalizeOutcomeForPage);
+
+  const estimatedFinalMaxC = buildEstimatedFinalMaxCForPage(
+    forecastRecord,
+    outcomeProbabilities
+  );
+
+  const generatedAt =
+    firstString(forecastRecord.generatedAt) ?? new Date().toISOString();
+
+  const maxSoFarC = firstNumber(
+    forecastRecord.maxSoFarC,
+    forecastRecord.maxSoFar,
+    forecastRecord.observedMaxSoFarC,
+    forecastRecord.observedMaxSoFar,
+    getAt(forecastRecord, ["weather", "sinceMidnight", "maxTempC"]),
+    getAt(forecastRecord, ["weather", "current", "maxSoFarC"]),
+    getAt(forecastRecord, ["weather", "current", "maxSoFar"]),
+    getAt(forecastRecord, ["weather", "current", "todayMax"]),
+    getAt(forecastRecord, ["weather", "current", "maxTemperature"]),
+    getAt(forecastRecord, ["diagnostics", "maxSoFarC"]),
+    getAt(forecastRecord, ["diagnostics", "maxSoFar"]),
+    getAt(forecastRecord, ["diagnostics", "observedMaxSoFarC"]),
+    getAt(forecastRecord, ["diagnostics", "observedMaxSoFar"])
+  );
+
+  const maxSoFarSource =
+    firstString(
+      forecastRecord.maxSoFarSource,
+      forecastRecord.observedMaxSoFarSource,
+      getAt(forecastRecord, ["weather", "maxSoFarSource"]),
+      getAt(forecastRecord, ["weather", "observedMaxSoFarSource"]),
+      getAt(forecastRecord, ["weather", "source"]),
+      getAt(forecastRecord, ["weather", "sinceMidnight", "source"]),
+      getAt(forecastRecord, ["weather", "current", "maxSoFarSource"]),
+      getAt(forecastRecord, ["weather", "current", "observedMaxSoFarSource"]),
+      getAt(forecastRecord, ["weather", "current", "source"]),
+      getAt(forecastRecord, ["diagnostics", "maxSoFarSource"]),
+      getAt(forecastRecord, ["diagnostics", "observedMaxSoFarSource"])
+    ) ?? (maxSoFarC !== null ? "HKO since-midnight observation" : null);
+
+  const calculatedTopOutcome =
+    [...outcomeProbabilities].sort(
+      (a, b) =>
+        (probabilityFromValue(b.probability) ?? -Infinity) -
+        (probabilityFromValue(a.probability) ?? -Infinity)
+    )[0] ?? null;
+
+  const topOutcome = forecastRecord.topOutcome ?? calculatedTopOutcome;
+
+  const keyDrivers =
+    stringArray(forecastRecord.keyDrivers) ??
+    stringArray(getAt(forecastRecord, ["summary", "keyDrivers"])) ??
+    stringArray(getAt(forecastRecord, ["diagnostics", "keyDrivers"])) ??
+    [];
+
+  const warnings =
+    stringArray(forecastRecord.warnings) ??
+    stringArray(getAt(forecastRecord, ["summary", "warnings"])) ??
+    stringArray(getAt(forecastRecord, ["diagnostics", "warnings"])) ??
+    [];
+
+  const aiExplanation = getAiExplanationText(aiCommentary);
+
+  const model = {
+    ...recordOrEmpty(forecastRecord.model),
+    estimatedFinalMaxC,
+    estimatedFinalDailyMaxC: estimatedFinalMaxC,
+    estimatedFinalDailyMax: estimatedFinalMaxC,
+    percentiles: estimatedFinalMaxC,
+    quantiles: estimatedFinalMaxC
+  };
+
+  const diagnostics = {
+    ...recordOrEmpty(forecastRecord.diagnostics),
+    estimatedFinalMaxC,
+    estimatedFinalDailyMaxC: estimatedFinalMaxC,
+    estimatedFinalDailyMax: estimatedFinalMaxC,
+    percentiles: estimatedFinalMaxC,
+    quantiles: estimatedFinalMaxC,
+    maxSoFarC,
+    maxSoFarSource
+  };
+
+  return {
+    ...forecastRecord,
+
+    generatedAt,
+
+    /*
+      Fields that page.tsx currently reads.
+    */
+    outcomeProbabilities,
+    estimatedFinalMaxC,
+    maxSoFarC,
+    maxSoFarSource,
+    aiExplanation,
+    keyDrivers,
+    warnings,
+
+    /*
+      Compatibility aliases.
+    */
+    outcomes: rawOutcomes,
+    probabilities: outcomeProbabilities,
+    estimatedFinalDailyMaxC: estimatedFinalMaxC,
+    estimatedFinalDailyMax: estimatedFinalMaxC,
+    estimatedFinalMax: estimatedFinalMaxC,
+    percentiles: estimatedFinalMaxC,
+    quantiles: estimatedFinalMaxC,
+
+    /*
+      Preserve / enrich existing fields.
+    */
+    topOutcome,
+    weather: forecastRecord.weather,
+    model,
+    diagnostics
+  } as unknown as ForecastResult;
 }
 
 function buildResultForHistory(
   forecast: Forecast,
   aiCommentary: AiCommentary
 ): ForecastResult {
-  const aiExplanation = getAiExplanationText(aiCommentary);
-
-  if (!aiExplanation) {
-    return forecast as ForecastResult;
-  }
-
-  return {
-    ...(forecast as ForecastResult),
-    aiExplanation
-  };
+  /*
+    Save the normalized result shape too, so history display can use:
+      row.result.outcomeProbabilities
+      row.result.estimatedFinalMaxC
+      row.result.maxSoFarC
+  */
+  return normalizeForecastResultForPage(forecast, aiCommentary);
 }
 
 async function ensureDatabaseInitialized() {
@@ -255,35 +892,34 @@ function buildForecastPayload(params: {
   historySave: HistorySaveResult;
 }) {
   /*
-    Important compatibility layer.
-
-    Different parts of the frontend may read the Poe explanation from
-    different locations, for example:
-
-      json.data.aiExplanation
-      json.data.result.aiExplanation
-      json.data.forecast.aiExplanation
-      json.aiExplanation
-      json.result.aiExplanation
-
-    So we attach aiExplanation to all common response shapes.
+    Normalize into the exact shape page.tsx expects.
   */
-  const aiExplanation = getAiExplanationText(params.aiCommentary);
+  const resultForDisplay = normalizeForecastResultForPage(
+    params.forecast,
+    params.aiCommentary
+  );
 
-  const resultForDisplay = {
-    ...(params.forecast as unknown as ForecastResult),
-    ...(aiExplanation ? { aiExplanation } : {})
-  } as ForecastResult;
+  const resultRecord = resultForDisplay as unknown as Record<string, unknown>;
+
+  const generatedAt =
+    firstString(resultRecord.generatedAt) ?? new Date().toISOString();
+
+  const aiExplanation =
+    firstString(resultRecord.aiExplanation) ??
+    getAiExplanationText(params.aiCommentary);
+
+  const weatherForDisplay = (resultRecord.weather ??
+    params.forecast.weather) as HkoWeatherSnapshot;
 
   const data = {
-    ...resultForDisplay,
+    ...resultRecord,
 
     /*
-      Main aliases expected by the current frontend.
+      Main aliases expected by page.tsx.
     */
     result: resultForDisplay,
     forecast: resultForDisplay,
-    weather: params.forecast.weather,
+    weather: weatherForDisplay,
 
     /*
       Poe AI aliases.
@@ -300,7 +936,7 @@ function buildForecastPayload(params: {
 
   return {
     ok: true,
-    generatedAt: params.forecast.generatedAt,
+    generatedAt,
 
     /*
       Main response shape used by page.tsx.
@@ -314,6 +950,24 @@ function buildForecastPayload(params: {
     result: resultForDisplay,
 
     /*
+      Forecast top-level fields for debugging / older clients.
+    */
+    outcomes: resultRecord.outcomes ?? [],
+    probabilities:
+      resultRecord.outcomeProbabilities ?? resultRecord.probabilities ?? [],
+    outcomeProbabilities: resultRecord.outcomeProbabilities ?? [],
+    topOutcome: resultRecord.topOutcome ?? null,
+    summary: resultRecord.summary ?? null,
+    weather: weatherForDisplay,
+    model: resultRecord.model ?? null,
+    diagnostics: resultRecord.diagnostics ?? null,
+    estimatedFinalMaxC: resultRecord.estimatedFinalMaxC ?? null,
+    estimatedFinalDailyMaxC: resultRecord.estimatedFinalDailyMaxC ?? null,
+    estimatedFinalDailyMax: resultRecord.estimatedFinalDailyMax ?? null,
+    maxSoFarC: resultRecord.maxSoFarC ?? null,
+    maxSoFarSource: resultRecord.maxSoFarSource ?? null,
+
+    /*
       Poe AI top-level aliases.
     */
     ai: params.aiCommentary,
@@ -323,30 +977,7 @@ function buildForecastPayload(params: {
     /*
       History save top-level alias.
     */
-    historySave: params.historySave,
-
-    /*
-      Existing forecast fields.
-    */
-    outcomes: params.forecast.outcomes,
-    probabilities: params.forecast.outcomes.map((outcome) => ({
-      name: outcome.name,
-      lower: outcome.lower,
-      upper: outcome.upper,
-      probability: outcome.probability,
-      probabilityPct: outcome.probabilityPct,
-      weatherProbability: outcome.weatherProbability,
-      weatherProbabilityPct: outcome.weatherProbabilityPct,
-      marketProbability: outcome.marketProbability,
-      marketProbabilityPct: outcome.marketProbabilityPct,
-      rank: outcome.rank,
-      isImpossibleByObservedMax: outcome.isImpossibleByObservedMax
-    })),
-    topOutcome: params.forecast.topOutcome,
-    summary: params.forecast.summary,
-    weather: params.forecast.weather,
-    model: params.forecast.model,
-    diagnostics: params.forecast.diagnostics
+    historySave: params.historySave
   };
 }
 
@@ -358,6 +989,18 @@ async function runForecast(options: RunForecastOptions) {
   if (options.ai) {
     try {
       aiCommentary = await getPoeForecastCommentary(forecast);
+
+      /*
+        If poe.ts returns null / empty instead of throwing,
+        show a useful diagnostic rather than silently showing:
+        "AI explanation disabled or not available."
+      */
+      if (!getAiExplanationText(aiCommentary)) {
+        aiCommentary = {
+          explanation:
+            "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape."
+        } as Awaited<ReturnType<typeof getPoeForecastCommentary>>;
+      }
     } catch (error) {
       console.error("Poe AI commentary error:", error);
 
@@ -383,21 +1026,20 @@ async function runForecast(options: RunForecastOptions) {
     historySave
   });
 }
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
 
-    /*
-      Defaults:
-      - includeClob true because Phase 2 is multi-channel.
-      - blendMarket true because final probability should use CLOB/Gamma when available.
-      - ai false by default to avoid spending Poe credits on every dashboard refresh.
-      - saveHistory false for GET requests.
-    */
     const includeClob = parseBoolean(url.searchParams.get("includeClob"), true);
     const blendMarket = parseBoolean(url.searchParams.get("blendMarket"), true);
     const debug = parseBoolean(url.searchParams.get("debug"), false);
 
+    /*
+      Keep AI always enabled for now because the UI is expecting explanation.
+      If you later want the checkbox to fully control Poe usage, change this
+      to parseBoolean(url.searchParams.get("ai"), false).
+    */
     const ai = true;
 
     const marketWeightOverride = parseNumber(
@@ -460,23 +1102,14 @@ export async function POST(request: Request) {
     const debug = parseBoolean(body.debug, false);
 
     /*
-      Frontend may send:
-      - ai
-      - explain
-      - forceAI
+      Keep AI always enabled for now.
 
-      Your page.tsx seems to send forceAI, so we support all three.
+      Your page.tsx sends forceAI, but the previous route was already hardcoded
+      to true. This keeps behaviour consistent and avoids the UI silently saying
+      "AI explanation disabled or not available."
     */
     const ai = true;
 
-    /*
-      Frontend sends:
-      - state
-      - saveHistory
-
-      If saveHistory is true and DATABASE_URL is configured,
-      this route will now save into forecast_runs.
-    */
     const state = parseMarketState(body.state);
     const saveHistory = parseBoolean(body.saveHistory, false);
 
