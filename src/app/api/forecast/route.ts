@@ -1417,14 +1417,15 @@ function buildEstimatedFinalMaxCForPage(
       getAt(forecastRecord, ["diagnostics", "quantiles", "p90"])
     ) ?? derived.p90;
 
-  return {
-    p10,
-    p25,
-    median,
-    p50: median,
-    p75,
-    p90
- },
+  return clampEstimatedFinalMaxC(
+    {
+      p10,
+      p25,
+      median,
+      p50: median,
+      p75,
+      p90
+    },
     observedMaxLowerBoundC
   );
 }
