@@ -71,7 +71,7 @@ export async function callPoe(
   options: PoeCallOptions = {}
 ): Promise<PoeCallResult> {
   const apiKey = process.env.POE_API_KEY;
-  const model = options.model ?? process.env.POE_MODEL ?? "Claude-Sonnet-4.6";
+  const model = options.model ?? process.env.POE_MODEL ?? "Claude-Opus-4.7";
 
   if (!apiKey) {
     return {
@@ -192,7 +192,7 @@ export async function getPoeForecastCommentary(
     ],
     {
       temperature: options.temperature ?? 0.2,
-      maxTokens: options.maxTokens ?? 850,
+      maxTokens: options.maxTokens ?? 8000,
       model: options.model
     }
   );
@@ -221,7 +221,7 @@ export async function askPoe(prompt: string, system?: string): Promise<string | 
     ],
     {
       temperature: 0.2,
-      maxTokens: 900
+      maxTokens: 5000
     }
   );
 
