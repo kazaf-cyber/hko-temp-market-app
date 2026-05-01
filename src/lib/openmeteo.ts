@@ -79,7 +79,7 @@ export async function getOpenMeteoForecast(): Promise<OpenMeteoForecast> {
     latitude: String(HKO_LAT),
     longitude: String(HKO_LON),
     timezone: "Asia/Hong_Kong",
-    forecast_days: "2",
+    forecast_days: "7",
     current: [
       "temperature_2m",
       "relative_humidity_2m",

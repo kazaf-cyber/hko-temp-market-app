@@ -1,6 +1,10 @@
 import { getMultiChannelSnapshot, type MultiChannelSnapshot } from "@/lib/multichannel";
 import { getMarketState } from "@/lib/state";
 import type { OutcomeRange } from "@/types";
+import {
+  getHktTodayISO,
+  normalizeISODate
+} from "@/lib/targetDate";
 
 export const FORECAST_ENGINE_VERSION = "multi-channel-v2.0.0";
 
@@ -25,6 +29,10 @@ type MarketStateLike = {
 type ClobRow = NonNullable<MultiChannelSnapshot["polymarketClob"]>["outcomes"][number];
 
 export type ForecastWeatherInputs = {
+  targetDate: string;
+  todayHkt: string;
+  targetIsTodayHkt: boolean;
+
   forecastTargetDate: string;
   hongKongHour: number;
   timeBand: "overnight" | "morning" | "midday" | "afternoon" | "evening";
