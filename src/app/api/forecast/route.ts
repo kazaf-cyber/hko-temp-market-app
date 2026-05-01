@@ -1,14 +1,29 @@
 import { NextResponse } from "next/server";
 import { getForecast, type GetForecastOptions } from "@/lib/forecast";
 import { getPoeForecastCommentary } from "@/lib/poe";
+import { initDatabase, saveForecastRun } from "@/lib/db";
+import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type Forecast = Awaited<ReturnType<typeof getForecast>>;
+type AiCommentary =
+  | Awaited<ReturnType<typeof getPoeForecastCommentary>>
+  | null;
 
 type HistorySaveResult = {
   saved: boolean;
   reason: string | null;
 };
+
+type RunForecastOptions = GetForecastOptions & {
+  ai?: boolean;
+  saveHistory?: boolean;
+  state?: MarketState | null;
+};
+
+let databaseInitPromise: Promise<void> | null = null;
 
 function parseBoolean(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
@@ -39,27 +54,208 @@ function parseNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function getDefaultHistorySave(saveHistory: boolean): HistorySaveResult {
-  if (!saveHistory) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseMarketState(value: unknown): MarketState | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return value as MarketState;
+}
+
+function getStringField(
+  record: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function formatHktDate(date: Date) {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "00";
+  const day = parts.find((part) => part.type === "day")?.value ?? "00";
+
+  return `${year}-${month}-${day}`;
+}
+
+function getForecastHktDate(forecast: Forecast) {
+  const forecastRecord = forecast as unknown as Record<string, unknown>;
+
+  const explicitForecastDate = getStringField(forecastRecord, [
+    "hktDate",
+    "hkt_date",
+    "forecastDate",
+    "date"
+  ]);
+
+  if (explicitForecastDate) {
+    return explicitForecastDate;
+  }
+
+  const weather = forecastRecord.weather;
+
+  if (isRecord(weather)) {
+    const explicitWeatherDate = getStringField(weather, [
+      "hktDate",
+      "hkt_date",
+      "forecastDate",
+      "date"
+    ]);
+
+    if (explicitWeatherDate) {
+      return explicitWeatherDate;
+    }
+  }
+
+  const generatedAt = getStringField(forecastRecord, ["generatedAt"]);
+
+  if (generatedAt) {
+    const generatedAtDate = new Date(generatedAt);
+
+    if (Number.isFinite(generatedAtDate.getTime())) {
+      return formatHktDate(generatedAtDate);
+    }
+  }
+
+  return formatHktDate(new Date());
+}
+
+function getAiExplanationText(aiCommentary: AiCommentary): string | null {
+  if (!aiCommentary) {
+    return null;
+  }
+
+  if (typeof aiCommentary === "string") {
+    return aiCommentary;
+  }
+
+  if (isRecord(aiCommentary)) {
+    const directText = getStringField(aiCommentary, [
+      "text",
+      "summary",
+      "explanation",
+      "commentary",
+      "content",
+      "message"
+    ]);
+
+    if (directText) {
+      return directText;
+    }
+  }
+
+  try {
+    return JSON.stringify(aiCommentary);
+  } catch {
+    return String(aiCommentary);
+  }
+}
+
+function buildResultForHistory(
+  forecast: Forecast,
+  aiCommentary: AiCommentary
+): ForecastResult {
+  const aiExplanation = getAiExplanationText(aiCommentary);
+
+  if (!aiExplanation) {
+    return forecast as ForecastResult;
+  }
+
+  return {
+    ...(forecast as ForecastResult),
+    aiExplanation
+  };
+}
+
+async function ensureDatabaseInitialized() {
+  if (!databaseInitPromise) {
+    databaseInitPromise = initDatabase().catch((error) => {
+      databaseInitPromise = null;
+      throw error;
+    });
+  }
+
+  return databaseInitPromise;
+}
+
+async function saveHistoryIfRequested(params: {
+  saveHistory: boolean;
+  state: MarketState | null;
+  forecast: Forecast;
+  aiCommentary: AiCommentary;
+}): Promise<HistorySaveResult> {
+  if (!params.saveHistory) {
     return {
       saved: false,
       reason: "History save was not requested."
     };
   }
 
-  return {
-    saved: false,
-    reason: "History saving is not connected in /api/forecast yet."
-  };
+  if (!params.state) {
+    return {
+      saved: false,
+      reason: "Market state was not provided, so history was not saved."
+    };
+  }
+
+  try {
+    /*
+      Make this route self-healing.
+
+      If forecast_runs table does not exist yet, initDatabase() will create it.
+      If DATABASE_URL is missing, initDatabase() will throw and we return a clean reason.
+    */
+    await ensureDatabaseInitialized();
+
+    const resultForHistory = buildResultForHistory(
+      params.forecast,
+      params.aiCommentary
+    );
+
+    return await saveForecastRun({
+      hktDate: getForecastHktDate(params.forecast),
+      state: params.state,
+      weather: params.forecast.weather as HkoWeatherSnapshot,
+      result: resultForHistory
+    });
+  } catch (error) {
+    console.error("Forecast history save error:", error);
+
+    return {
+      saved: false,
+      reason:
+        error instanceof Error
+          ? error.message
+          : "Failed to save forecast history."
+    };
+  }
 }
 
 function buildForecastPayload(params: {
-  forecast: Awaited<ReturnType<typeof getForecast>>;
-  aiCommentary: Awaited<ReturnType<typeof getPoeForecastCommentary>> | null;
+  forecast: Forecast;
+  aiCommentary: AiCommentary;
   historySave: HistorySaveResult;
 }) {
   /*
-    Important compatibility layer:
+    Important compatibility layer.
 
     Your frontend currently expects:
 
@@ -67,20 +263,19 @@ function buildForecastPayload(params: {
       json.data.weather
       json.data.historySave.saved
 
-    The old API response only used:
-
-      data: forecast
-
-    and did not include data.historySave.
-
-    So we now make data backward-compatible by including:
+    So data must include:
       - all forecast fields
-      - result: forecast
-      - historySave: { saved, reason }
+      - result
+      - forecast
+      - weather
+      - historySave
+      - ai
   */
   const data = {
     ...params.forecast,
     result: params.forecast,
+    forecast: params.forecast,
+    ai: params.aiCommentary,
     historySave: params.historySave
   };
 
@@ -89,9 +284,13 @@ function buildForecastPayload(params: {
     generatedAt: params.forecast.generatedAt,
 
     /*
-      New canonical shape, with frontend compatibility fields.
+      Main response shape used by the current page.tsx.
     */
     data,
+
+    /*
+      AI commentary, if requested.
+    */
     ai: params.aiCommentary,
 
     /*
@@ -122,19 +321,19 @@ function buildForecastPayload(params: {
   };
 }
 
-async function runForecast(
-  options: GetForecastOptions & {
-    ai?: boolean;
-    saveHistory?: boolean;
-  }
-) {
+async function runForecast(options: RunForecastOptions) {
   const forecast = await getForecast(options);
 
   const aiCommentary = options.ai
     ? await getPoeForecastCommentary(forecast)
     : null;
 
-  const historySave = getDefaultHistorySave(Boolean(options.saveHistory));
+  const historySave = await saveHistoryIfRequested({
+    saveHistory: Boolean(options.saveHistory),
+    state: options.state ?? null,
+    forecast,
+    aiCommentary
+  });
 
   return buildForecastPayload({
     forecast,
@@ -173,7 +372,8 @@ export async function GET(request: Request) {
       includeRawSnapshot: debug,
       marketWeightOverride,
       ai,
-      saveHistory: false
+      saveHistory: false,
+      state: null
     });
 
     return NextResponse.json(payload, {
@@ -223,9 +423,9 @@ export async function POST(request: Request) {
 
     /*
       Frontend may send:
-        - ai
-        - explain
-        - forceAI
+      - ai
+      - explain
+      - forceAI
 
       Your page.tsx seems to send forceAI, so we support all three.
     */
@@ -235,12 +435,14 @@ export async function POST(request: Request) {
       parseBoolean(body.forceAI, false);
 
     /*
-      Frontend sends saveHistory.
-      This route now returns data.historySave every time.
+      Frontend sends:
+      - state
+      - saveHistory
 
-      Actual database save is not wired here yet because the original file
-      does not import any DB/history function.
+      If saveHistory is true and DATABASE_URL is configured,
+      this route will now save into forecast_runs.
     */
+    const state = parseMarketState(body.state);
     const saveHistory = parseBoolean(body.saveHistory, false);
 
     const marketWeightOverride = parseNumber(body.marketWeight);
@@ -251,7 +453,8 @@ export async function POST(request: Request) {
       includeRawSnapshot: debug,
       marketWeightOverride,
       ai,
-      saveHistory
+      saveHistory,
+      state
     });
 
     return NextResponse.json(payload, {
