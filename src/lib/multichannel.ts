@@ -7,6 +7,7 @@ import type { HkoWeatherSnapshot, OutcomeRange } from "@/types";
 import type { OpenMeteoForecast } from "@/lib/openmeteo";
 import type { WindyForecast } from "@/lib/windy";
 import type { PolymarketClobSnapshot } from "@/lib/polymarketClob";
+import { getPolymarketOutcomesFromInput } from "@/lib/polymarket";
 
 export type MultiChannelDerivedSignals = {
   hkoCurrentTempC: number | null;
@@ -145,7 +146,9 @@ return {
 export async function getMultiChannelSnapshot(params?: {
   outcomes?: OutcomeRange[];
   includeClob?: boolean;
+  polymarketUrl?: string | null;
 }): Promise<MultiChannelSnapshot> {
+  
   const errors: MultiChannelSnapshot["errors"] = [];
 
   const hko = await getHkoWeatherSnapshot();
