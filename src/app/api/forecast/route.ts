@@ -1,5 +1,3 @@
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
 import { NextResponse } from "next/server";
 import { getForecast, type GetForecastOptions } from "@/lib/forecast";
 import { getPoeForecastCommentary } from "@/lib/poe";
@@ -8,6 +6,7 @@ import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Forecast = Awaited<ReturnType<typeof getForecast>>;
 
@@ -213,7 +212,732 @@ function firstProbability(...values: unknown[]): number | null {
 
   return null;
 }
+type NumericCandidate = {
+  value: number;
+  source: string;
+  path: string;
+};
 
+type OutcomeRange = {
+  lower: number | null;
+  upper: number | null;
+};
+
+const PROBABILITY_EPSILON = 1e-9;
+
+function clampProbability(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function probabilityToPct(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return Math.round(clampProbability(value) * 10000) / 100;
+}
+
+function roundProbability(value: number): number {
+  return Math.round(clampProbability(value) * 10000) / 10000;
+}
+
+function roundTemperatureC(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return Math.round(value * 10) / 10;
+}
+
+function normalizeStationName(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
+}
+
+function isHkoStationName(value: unknown): boolean {
+  const normalized = normalizeStationName(value);
+
+  return [
+    "hko",
+    "hkobservatory",
+    "hongkongobservatory",
+    "香港天文台"
+  ].includes(normalized);
+}
+
+function getHkoTemperatureFromObservationArray(value: unknown): number | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const records = value.filter(isRecord);
+
+  const hkoRecord =
+    records.find((item) =>
+      isHkoStationName(
+        firstString(
+          item.place,
+          item.station,
+          item.name,
+          item.automaticWeatherStation,
+          item.automatic_weather_station
+        )
+      )
+    ) ?? null;
+
+  if (!hkoRecord) {
+    return null;
+  }
+
+  return firstNumber(
+    hkoRecord.value,
+    hkoRecord.temp,
+    hkoRecord.temperature,
+    hkoRecord.temperatureC,
+    hkoRecord.airTemperature,
+    hkoRecord.airTemperatureC
+  );
+}
+
+function numberCandidate(
+  path: string,
+  value: unknown,
+  source: string
+): NumericCandidate | null {
+  const parsed = toFiniteNumber(value);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  return {
+    value: parsed,
+    source,
+    path
+  };
+}
+
+function pickMaxCandidate(
+  candidates: Array<NumericCandidate | null>
+): NumericCandidate | null {
+  const valid = candidates.filter(
+    (candidate): candidate is NumericCandidate => candidate !== null
+  );
+
+  if (!valid.length) {
+    return null;
+  }
+
+  return valid.reduce((best, candidate) =>
+    candidate.value > best.value ? candidate : best
+  );
+}
+
+/*
+  This is the critical lower-bound rule:
+
+    final daily max >= max(
+      HKO max since midnight,
+      HKO current temp,
+      latest observed HKO temp,
+      any explicit observed max so far
+    )
+
+  Do NOT include official forecast max here. Forecast is not observation.
+*/
+function getObservedMaxLowerBoundCandidate(
+  forecastRecord: Record<string, unknown>
+): NumericCandidate | null {
+  return pickMaxCandidate([
+    numberCandidate(
+      "maxSoFarC",
+      forecastRecord.maxSoFarC,
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "maxSoFar",
+      forecastRecord.maxSoFar,
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "observedMaxSoFarC",
+      forecastRecord.observedMaxSoFarC,
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "observedMaxSoFar",
+      forecastRecord.observedMaxSoFar,
+      "Observed max so far"
+    ),
+
+    numberCandidate(
+      "hkoCurrentTempC",
+      forecastRecord.hkoCurrentTempC,
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "currentTempC",
+      forecastRecord.currentTempC,
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "currentTemperatureC",
+      forecastRecord.currentTemperatureC,
+      "HKO current temperature fallback"
+    ),
+
+    numberCandidate(
+      "weather.sinceMidnight.maxTempC",
+      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTempC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weather.sinceMidnight.maxTemperatureC",
+      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTemperatureC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weather.sinceMidnight.maxTemp",
+      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTemp"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weather.sinceMidnight.maxTemperature",
+      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTemperature"]),
+      "HKO max since midnight"
+    ),
+
+    numberCandidate(
+      "weather.current.maxSoFarC",
+      getAt(forecastRecord, ["weather", "current", "maxSoFarC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weather.current.todayMax",
+      getAt(forecastRecord, ["weather", "current", "todayMax"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weather.current.maxTemperature",
+      getAt(forecastRecord, ["weather", "current", "maxTemperature"]),
+      "Observed max so far"
+    ),
+
+    numberCandidate(
+      "weather.currentTempC",
+      getAt(forecastRecord, ["weather", "currentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.currentTemperatureC",
+      getAt(forecastRecord, ["weather", "currentTemperatureC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.temperatureC",
+      getAt(forecastRecord, ["weather", "temperatureC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.temperature",
+      getAt(forecastRecord, ["weather", "temperature"]),
+      "HKO current temperature fallback"
+    ),
+
+    numberCandidate(
+      "weather.current.tempC",
+      getAt(forecastRecord, ["weather", "current", "tempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.temperatureC",
+      getAt(forecastRecord, ["weather", "current", "temperatureC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.temperature",
+      getAt(forecastRecord, ["weather", "current", "temperature"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.temperature.value",
+      getAt(forecastRecord, ["weather", "current", "temperature", "value"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.airTemperatureC",
+      getAt(forecastRecord, ["weather", "current", "airTemperatureC"]),
+      "HKO current temperature fallback"
+    ),
+
+    numberCandidate(
+      "weather.temperature.data[HKO].value",
+      getHkoTemperatureFromObservationArray(
+        getAt(forecastRecord, ["weather", "temperature", "data"])
+      ),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.temperature.data[HKO].value",
+      getHkoTemperatureFromObservationArray(
+        getAt(forecastRecord, ["weather", "current", "temperature", "data"])
+      ),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.raw.temperature.data[HKO].value",
+      getHkoTemperatureFromObservationArray(
+        getAt(forecastRecord, ["weather", "raw", "temperature", "data"])
+      ),
+      "HKO current temperature fallback"
+    ),
+
+    numberCandidate(
+      "diagnostics.maxSoFarC",
+      getAt(forecastRecord, ["diagnostics", "maxSoFarC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "diagnostics.observedMaxSoFarC",
+      getAt(forecastRecord, ["diagnostics", "observedMaxSoFarC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "diagnostics.hkoCurrentTempC",
+      getAt(forecastRecord, ["diagnostics", "hkoCurrentTempC"]),
+      "HKO current temperature fallback"
+    )
+  ]);
+}
+
+function parseOutcomeRangeFromText(text: string): OutcomeRange {
+  const normalized = text
+    .replace(/℃/g, "°C")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const explicitRange = normalized.match(
+    /(-?\d+(?:\.\d+)?)\s*(?:°\s*C|C)?\s*(?:to|至|-|–|—)\s*<?\s*(-?\d+(?:\.\d+)?)/i
+  );
+
+  if (explicitRange) {
+    return {
+      lower: Number(explicitRange[1]),
+      upper: Number(explicitRange[2])
+    };
+  }
+
+  const lessThan = normalized.match(
+    /(?:<|below)\s*(-?\d+(?:\.\d+)?)\s*(?:°\s*C|C)?/i
+  );
+
+  if (lessThan) {
+    return {
+      lower: null,
+      upper: Number(lessThan[1])
+    };
+  }
+
+  const greaterThanOrEqual = normalized.match(
+    /(?:>=|≥|at least)\s*(-?\d+(?:\.\d+)?)\s*(?:°\s*C|C)?/i
+  );
+
+  if (greaterThanOrEqual) {
+    return {
+      lower: Number(greaterThanOrEqual[1]),
+      upper: null
+    };
+  }
+
+  const orBelow = normalized.match(
+    /(-?\d+(?:\.\d+)?)\s*(?:°\s*C|C)?\s*(?:or below|or lower|or less|and below|或以下|以下)$/i
+  );
+
+  if (orBelow) {
+    /*
+      Market label "19°C or below" usually means:
+        final max < 20.0°C
+    */
+    const value = Number(orBelow[1]);
+
+    return {
+      lower: null,
+      upper: Number.isInteger(value) ? value + 1 : value
+    };
+  }
+
+  const orHigher = normalized.match(
+    /(-?\d+(?:\.\d+)?)\s*(?:°\s*C|C)?\s*(?:or higher|or above|or more|and above|或以上|以上)$/i
+  );
+
+  if (orHigher) {
+    return {
+      lower: Number(orHigher[1]),
+      upper: null
+    };
+  }
+
+  const singleBucket = normalized.match(
+    /^(-?\d+(?:\.\d+)?)\s*(?:°\s*C|C)$/i
+  );
+
+  if (singleBucket) {
+    const lower = Number(singleBucket[1]);
+
+    return {
+      lower,
+      upper: lower + 1
+    };
+  }
+
+  return {
+    lower: null,
+    upper: null
+  };
+}
+
+function getOutcomeRange(row: Record<string, unknown>): OutcomeRange {
+  return {
+    lower: firstNumber(row.lower),
+    upper: firstNumber(row.upper)
+  };
+}
+
+function isOutcomeImpossibleByObservedMax(
+  row: Record<string, unknown>,
+  observedMaxC: number
+): boolean {
+  const { upper } = getOutcomeRange(row);
+
+  /*
+    Outcome range is [lower, upper).
+    If observed max is already >= upper, final daily max can no longer end
+    inside this bucket.
+  */
+  return upper !== null && upper <= observedMaxC;
+}
+
+function outcomeContainsObservedMax(
+  row: Record<string, unknown>,
+  observedMaxC: number
+): boolean {
+  const { lower, upper } = getOutcomeRange(row);
+
+  return (
+    (lower === null || observedMaxC >= lower) &&
+    (upper === null || observedMaxC < upper)
+  );
+}
+
+function setModelProbabilityOnRow(
+  row: Record<string, unknown>,
+  probability: number | null,
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const modelProbability =
+    probability === null ? null : roundProbability(probability);
+
+  const modelProbabilityPct = probabilityToPct(modelProbability);
+
+  const marketProbability = firstProbability(
+    row.marketProbability,
+    row.polymarketProbability,
+    row.marketPrice,
+    row.price,
+    row.clobMidpoint,
+    row.marketProbabilityPct,
+    row.polymarketProbabilityPct,
+    row.marketPct,
+    row.polymarketPct
+  );
+
+  const marketProbabilityPct = probabilityToPct(marketProbability);
+
+  const edge =
+    modelProbability !== null && marketProbability !== null
+      ? modelProbability - marketProbability
+      : null;
+
+  const edgePct = edge === null ? null : Math.round(edge * 10000) / 100;
+
+  return {
+    ...row,
+    ...extra,
+
+    /*
+      page.tsx model probability shape.
+    */
+    probability: modelProbability,
+    probabilityPct: modelProbabilityPct,
+
+    /*
+      Explicit aliases.
+    */
+    modelProbability,
+    modelProbabilityPct,
+    weatherProbability: modelProbability,
+    weatherProbabilityPct: modelProbabilityPct,
+    forecastProbability: modelProbability,
+    forecastProbabilityPct: modelProbabilityPct,
+
+    /*
+      Preserve / normalize market side too.
+    */
+    marketProbability,
+    marketProbabilityPct,
+    polymarketProbability: marketProbability,
+    polymarketProbabilityPct: marketProbabilityPct,
+
+    edge,
+    edgePct
+  };
+}
+
+function repairOutcomeProbabilitiesForObservedMax(
+  rows: Record<string, unknown>[],
+  observedMaxC: number | null
+): Record<string, unknown>[] {
+  if (observedMaxC === null) {
+    return rows.map((row) => {
+      const probability = probabilityFromValue(row.probability);
+
+      return probability === null
+        ? row
+        : setModelProbabilityOnRow(row, probability);
+    });
+  }
+
+  const observedBucketIndex = rows.findIndex((row) =>
+    outcomeContainsObservedMax(row, observedMaxC)
+  );
+
+  let movedImpossibleMass = 0;
+
+  const repaired = rows.map((row) => {
+    const probability = probabilityFromValue(row.probability);
+    const impossibleByObservedMax = isOutcomeImpossibleByObservedMax(
+      row,
+      observedMaxC
+    );
+
+    if (impossibleByObservedMax) {
+      if (probability !== null) {
+        movedImpossibleMass += Math.max(0, probability);
+      }
+
+      return setModelProbabilityOnRow(row, 0, {
+        impossibleByObservedMax: true,
+        observedMaxLowerBoundC: observedMaxC,
+        modelProbabilityRepair:
+          "Set to 0 because observed max already exceeds this bucket."
+      });
+    }
+
+    return {
+      ...row,
+      impossibleByObservedMax: false,
+      observedMaxLowerBoundC: observedMaxC
+    };
+  });
+
+  if (
+    movedImpossibleMass > PROBABILITY_EPSILON &&
+    observedBucketIndex >= 0
+  ) {
+    const currentObservedBucketProbability =
+      probabilityFromValue(repaired[observedBucketIndex].probability) ?? 0;
+
+    repaired[observedBucketIndex] = setModelProbabilityOnRow(
+      repaired[observedBucketIndex],
+      currentObservedBucketProbability + movedImpossibleMass,
+      {
+        modelProbabilityRepair:
+          "Received probability mass from buckets made impossible by observed max."
+      }
+    );
+  }
+
+  const possibleTotal = repaired.reduce((sum, row) => {
+    if (row.impossibleByObservedMax === true) {
+      return sum;
+    }
+
+    const probability = probabilityFromValue(row.probability);
+
+    return sum + (probability === null ? 0 : Math.max(0, probability));
+  }, 0);
+
+  /*
+    If after removing impossible buckets there is no usable model probability,
+    fall back conservatively:
+
+      - observed bucket = 100%
+      - other possible buckets = 0%
+
+    This is not a full weather forecast, but it prevents impossible / missing
+    output and obeys the hard observed lower bound.
+  */
+  if (possibleTotal <= PROBABILITY_EPSILON) {
+    return repaired.map((row, index) => {
+      if (row.impossibleByObservedMax === true) {
+        return row;
+      }
+
+      return setModelProbabilityOnRow(row, index === observedBucketIndex ? 1 : 0, {
+        modelProbabilityRepair:
+          index === observedBucketIndex
+            ? "Fallback 100% to bucket containing observed max because model probabilities were missing."
+            : "Fallback 0% because model probabilities were missing."
+      });
+    });
+  }
+
+  const shouldNormalize = Math.abs(possibleTotal - 1) > 0.005;
+
+  return repaired.map((row) => {
+    if (row.impossibleByObservedMax === true) {
+      return row;
+    }
+
+    const probability = probabilityFromValue(row.probability) ?? 0;
+
+    return setModelProbabilityOnRow(
+      row,
+      shouldNormalize ? probability / possibleTotal : probability,
+      {
+        modelProbabilityRepair: shouldNormalize
+          ? "Renormalized after applying observed max lower bound."
+          : row.modelProbabilityRepair ?? null
+      }
+    );
+  });
+}
+
+function clampEstimatedFinalMaxC(
+  estimated: {
+    p10: number | null;
+    p25: number | null;
+    median: number | null;
+    p50: number | null;
+    p75: number | null;
+    p90: number | null;
+  },
+  observedMaxC: number | null
+) {
+  function clamp(value: unknown): number | null {
+    const parsed = toFiniteNumber(value);
+
+    if (parsed === null) {
+      return roundTemperatureC(observedMaxC);
+    }
+
+    if (observedMaxC === null) {
+      return roundTemperatureC(parsed);
+    }
+
+    return roundTemperatureC(Math.max(parsed, observedMaxC));
+  }
+
+  const p10 = clamp(estimated.p10);
+  const p25 = clamp(estimated.p25);
+  const median = clamp(estimated.median ?? estimated.p50);
+  const p75 = clamp(estimated.p75);
+  const p90 = clamp(estimated.p90);
+
+  return {
+    p10,
+    p25,
+    median,
+    p50: median,
+    p75,
+    p90
+  };
+}
+
+function buildWeatherForDisplay(params: {
+  forecastRecord: Record<string, unknown>;
+  observedMaxCandidate: NumericCandidate | null;
+  maxSoFarC: number | null;
+  maxSoFarSource: string | null;
+}): Record<string, unknown> {
+  const { forecastRecord, observedMaxCandidate, maxSoFarC, maxSoFarSource } =
+    params;
+
+  const weatherRecord = recordOrEmpty(forecastRecord.weather);
+  const sinceMidnightRecord = recordOrEmpty(weatherRecord.sinceMidnight);
+
+  const existingSinceMidnightMaxC = firstNumber(
+    sinceMidnightRecord.maxTempC,
+    sinceMidnightRecord.maxTemperatureC,
+    sinceMidnightRecord.maxTemp,
+    sinceMidnightRecord.maxTemperature
+  );
+
+  const existingSinceMidnightMinC = firstNumber(
+    sinceMidnightRecord.minTempC,
+    sinceMidnightRecord.minTemperatureC,
+    sinceMidnightRecord.minTemp,
+    sinceMidnightRecord.minTemperature
+  );
+
+  const displaySinceMidnightMaxC = existingSinceMidnightMaxC ?? maxSoFarC;
+
+  const sinceMidnightMaxSource =
+    existingSinceMidnightMaxC !== null
+      ? firstString(
+          sinceMidnightRecord.maxTempSource,
+          sinceMidnightRecord.source
+        ) ?? "HKO max since midnight"
+      : maxSoFarC !== null
+        ? `${maxSoFarSource ?? "observed temperature"} fallback`
+        : null;
+
+  return {
+    ...weatherRecord,
+
+    maxSoFarC,
+    maxSoFarSource,
+    observedMaxSoFarC: maxSoFarC,
+    observedMaxSoFarSource: maxSoFarSource,
+
+    /*
+      These aliases help frontend cards even if original weather shape differs.
+    */
+    hkoMaxSinceMidnightC: displaySinceMidnightMaxC,
+    hkoMinSinceMidnightC: existingSinceMidnightMinC,
+
+    sinceMidnight: {
+      ...sinceMidnightRecord,
+
+      maxTempC: displaySinceMidnightMaxC,
+      maxTemperatureC: displaySinceMidnightMaxC,
+      maxTemp: displaySinceMidnightMaxC,
+      maxTemperature: displaySinceMidnightMaxC,
+      maxTempSource: sinceMidnightMaxSource,
+
+      minTempC: existingSinceMidnightMinC,
+      minTemperatureC: existingSinceMidnightMinC,
+      minTemp: existingSinceMidnightMinC,
+      minTemperature: existingSinceMidnightMinC,
+
+      source:
+        firstString(sinceMidnightRecord.source) ??
+        sinceMidnightMaxSource ??
+        null
+    },
+
+    sourceDiagnostics: {
+      ...recordOrEmpty(weatherRecord.sourceDiagnostics),
+      observedFinalMaxLowerBound: {
+        valueC: maxSoFarC,
+        source: maxSoFarSource,
+        path: observedMaxCandidate?.path ?? null
+      }
+    }
+  };
+}
 function stringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) {
     return null;
@@ -355,8 +1079,27 @@ function normalizeOutcomeForPage(
     firstString(row.name, row.outcome, row.label, row.title) ??
     `Outcome ${index + 1}`;
 
-  const lower = firstNumber(row.lower, row.min, row.from);
-  const upper = firstNumber(row.upper, row.max, row.to);
+  const parsedRange = parseOutcomeRangeFromText(
+    firstString(row.range, row.description, name) ?? name
+  );
+
+  const lower =
+    firstNumber(
+      row.lower,
+      row.min,
+      row.from,
+      getAt(row, ["range", "lower"]),
+      getAt(row, ["range", "from"])
+    ) ?? parsedRange.lower;
+
+  const upper =
+    firstNumber(
+      row.upper,
+      row.max,
+      row.to,
+      getAt(row, ["range", "upper"]),
+      getAt(row, ["range", "to"])
+    ) ?? parsedRange.upper;
 
   /*
     IMPORTANT:
@@ -531,7 +1274,8 @@ function deriveEstimatedFinalMaxCFromOutcomes(
 
 function buildEstimatedFinalMaxCForPage(
   forecastRecord: Record<string, unknown>,
-  outcomeProbabilities: Record<string, unknown>[]
+  outcomeProbabilities: Record<string, unknown>[],
+  observedMaxLowerBoundC: number | null
 ) {
   const derived = deriveEstimatedFinalMaxCFromOutcomes(outcomeProbabilities);
 
@@ -680,7 +1424,9 @@ function buildEstimatedFinalMaxCForPage(
     p50: median,
     p75,
     p90
-  };
+ },
+    observedMaxLowerBoundC
+  );
 }
 
 function normalizeForecastResultForPage(
@@ -688,6 +1434,11 @@ function normalizeForecastResultForPage(
   aiCommentary: AiCommentary
 ): ForecastResult {
   const forecastRecord = recordOrEmpty(forecast);
+
+  const observedMaxCandidate =
+    getObservedMaxLowerBoundCandidate(forecastRecord);
+
+  const observedMaxLowerBoundC = observedMaxCandidate?.value ?? null;
 
   const rawOutcomes = Array.isArray(forecastRecord.outcomes)
     ? forecastRecord.outcomes
@@ -697,33 +1448,26 @@ function normalizeForecastResultForPage(
         ? forecastRecord.outcomeProbabilities
         : [];
 
-  const outcomeProbabilities = rawOutcomes.map(normalizeOutcomeForPage);
+  const normalizedOutcomeRows = rawOutcomes.map(normalizeOutcomeForPage);
+
+  const outcomeProbabilities = repairOutcomeProbabilitiesForObservedMax(
+    normalizedOutcomeRows,
+    observedMaxLowerBoundC
+  );
 
   const estimatedFinalMaxC = buildEstimatedFinalMaxCForPage(
     forecastRecord,
-    outcomeProbabilities
+    outcomeProbabilities,
+    observedMaxLowerBoundC
   );
 
   const generatedAt =
     firstString(forecastRecord.generatedAt) ?? new Date().toISOString();
 
-  const maxSoFarC = firstNumber(
-    forecastRecord.maxSoFarC,
-    forecastRecord.maxSoFar,
-    forecastRecord.observedMaxSoFarC,
-    forecastRecord.observedMaxSoFar,
-    getAt(forecastRecord, ["weather", "sinceMidnight", "maxTempC"]),
-    getAt(forecastRecord, ["weather", "current", "maxSoFarC"]),
-    getAt(forecastRecord, ["weather", "current", "maxSoFar"]),
-    getAt(forecastRecord, ["weather", "current", "todayMax"]),
-    getAt(forecastRecord, ["weather", "current", "maxTemperature"]),
-    getAt(forecastRecord, ["diagnostics", "maxSoFarC"]),
-    getAt(forecastRecord, ["diagnostics", "maxSoFar"]),
-    getAt(forecastRecord, ["diagnostics", "observedMaxSoFarC"]),
-    getAt(forecastRecord, ["diagnostics", "observedMaxSoFar"])
-  );
+  const maxSoFarC = observedMaxLowerBoundC;
 
   const maxSoFarSource =
+    observedMaxCandidate?.source ??
     firstString(
       forecastRecord.maxSoFarSource,
       forecastRecord.observedMaxSoFarSource,
@@ -736,7 +1480,15 @@ function normalizeForecastResultForPage(
       getAt(forecastRecord, ["weather", "current", "source"]),
       getAt(forecastRecord, ["diagnostics", "maxSoFarSource"]),
       getAt(forecastRecord, ["diagnostics", "observedMaxSoFarSource"])
-    ) ?? (maxSoFarC !== null ? "HKO since-midnight observation" : null);
+    ) ??
+    (maxSoFarC !== null ? "Observed temperature fallback" : null);
+
+  const weatherForDisplay = buildWeatherForDisplay({
+    forecastRecord,
+    observedMaxCandidate,
+    maxSoFarC,
+    maxSoFarSource
+  });
 
   const calculatedTopOutcome =
     [...outcomeProbabilities].sort(
@@ -778,7 +1530,22 @@ function normalizeForecastResultForPage(
     percentiles: estimatedFinalMaxC,
     quantiles: estimatedFinalMaxC,
     maxSoFarC,
-    maxSoFarSource
+    maxSoFarSource,
+    observedMaxSoFarC: maxSoFarC,
+    observedMaxSoFarSource: maxSoFarSource,
+    observedFinalMaxLowerBoundC: maxSoFarC,
+    observedFinalMaxLowerBoundSource: maxSoFarSource,
+    observedFinalMaxLowerBoundPath: observedMaxCandidate?.path ?? null,
+    sourceDiagnostics: {
+      ...recordOrEmpty(getAt(forecastRecord, ["diagnostics", "sourceDiagnostics"])),
+      observedFinalMaxLowerBound: {
+        valueC: maxSoFarC,
+        source: maxSoFarSource,
+        path: observedMaxCandidate?.path ?? null,
+        rule:
+          "finalDailyMax >= max(HKO max since midnight, HKO current temperature, observed max so far)"
+      }
+    }
   };
 
   return {
@@ -793,14 +1560,22 @@ function normalizeForecastResultForPage(
     estimatedFinalMaxC,
     maxSoFarC,
     maxSoFarSource,
+    observedMaxSoFarC: maxSoFarC,
+    observedMaxSoFarSource: maxSoFarSource,
+    observedFinalMaxLowerBoundC: maxSoFarC,
+    observedFinalMaxLowerBoundSource: maxSoFarSource,
     aiExplanation,
     keyDrivers,
     warnings,
 
     /*
       Compatibility aliases.
+      IMPORTANT:
+      Do not expose rawOutcomes as outcomes, because page.tsx may read
+      forecast.outcomes directly. Expose repaired normalized rows instead.
     */
-    outcomes: rawOutcomes,
+    rawOutcomes,
+    outcomes: outcomeProbabilities,
     probabilities: outcomeProbabilities,
     estimatedFinalDailyMaxC: estimatedFinalMaxC,
     estimatedFinalDailyMax: estimatedFinalMaxC,
@@ -812,7 +1587,7 @@ function normalizeForecastResultForPage(
       Preserve / enrich existing fields.
     */
     topOutcome,
-    weather: forecastRecord.weather,
+    weather: weatherForDisplay,
     model,
     diagnostics
   } as unknown as ForecastResult;
@@ -918,7 +1693,8 @@ function buildForecastPayload(params: {
     getAiExplanationText(params.aiCommentary);
 
   const weatherForDisplay = (resultRecord.weather ??
-    params.forecast.weather) as HkoWeatherSnapshot;
+    (params.forecast as Forecast & { weather?: unknown }).weather ??
+    {}) as HkoWeatherSnapshot;
 
   const data = {
     ...resultRecord,
@@ -997,7 +1773,16 @@ async function runForecast(options: RunForecastOptions) {
 
   if (options.ai) {
     try {
-      aiCommentary = await getPoeForecastCommentary(forecast);
+      /*
+        Give Poe the same normalized / repaired data that the UI sees.
+        Otherwise Poe may analyse raw missing / impossible probabilities.
+      */
+      const forecastForAi = normalizeForecastResultForPage(
+        forecast,
+        null
+      ) as unknown as Forecast;
+
+      aiCommentary = await getPoeForecastCommentary(forecastForAi);
 
       /*
         If poe.ts returns null / empty instead of throwing,
