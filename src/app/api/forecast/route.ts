@@ -819,52 +819,106 @@ function setModelProbabilityOnRow(
   probability: number | null,
   extra: Record<string, unknown> = {}
 ): Record<string, unknown> {
-  const modelProbability =
+  /*
+    Legacy name note:
+    This function is still named setModelProbabilityOnRow because the rest of
+    route.ts already calls it, but Phase 2 treats the incoming probability as
+    the final display probability after repair / blend.
+
+    We preserve weatherProbability separately when it already exists.
+  */
+  const finalProbability =
     probability === null ? null : roundProbability(probability);
 
-  const modelProbabilityPct = probabilityToPct(modelProbability);
+  const finalProbabilityPct = probabilityToPct(finalProbability);
 
+  const clob = getClobBidAskFromRow(row);
+  const gammaProbability = getGammaProbabilityFromRow(row);
   const marketProbability = getMarketProbabilityFromRow(row);
-
   const marketProbabilityPct = probabilityToPct(marketProbability);
 
+  const existingWeatherProbability = firstProbability(
+    row.weatherFairProbability,
+    row.weatherProbability,
+    row.unblendedWeatherProbability,
+    row.weatherModelProbability,
+    row.rawWeatherProbability,
+    getAt(row, ["weather", "fairProbability"]),
+    getAt(row, ["weather", "probability"]),
+    getAt(row, ["model", "weatherProbability"]),
+    getAt(row, ["model", "fairProbability"])
+  );
+
+  const weatherProbability = existingWeatherProbability ?? finalProbability;
+  const weatherProbabilityPct = probabilityToPct(weatherProbability);
+
+  const edgeBaseProbability = weatherProbability ?? finalProbability;
+
   const edge =
-    modelProbability !== null && marketProbability !== null
-      ? modelProbability - marketProbability
+    edgeBaseProbability !== null && marketProbability !== null
+      ? edgeBaseProbability - marketProbability
+      : null;
+
+  const finalEdge =
+    finalProbability !== null && marketProbability !== null
+      ? finalProbability - marketProbability
       : null;
 
   const edgePct = edge === null ? null : Math.round(edge * 10000) / 100;
+  const finalEdgePct =
+    finalEdge === null ? null : Math.round(finalEdge * 10000) / 100;
 
   return {
     ...row,
     ...extra,
 
     /*
-      page.tsx model probability shape.
+      page.tsx legacy aliases.
+      In Phase 2 these should point at the repaired final probability so old UI
+      code does not silently show stale weather-only numbers.
     */
-    probability: modelProbability,
-    probabilityPct: modelProbabilityPct,
+    probability: finalProbability,
+    probabilityPct: finalProbabilityPct,
+    modelProbability: finalProbability,
+    modelProbabilityPct: finalProbabilityPct,
+    forecastProbability: finalProbability,
+    forecastProbabilityPct: finalProbabilityPct,
 
     /*
-      Explicit aliases.
+      Phase 2 explicit probabilities.
     */
-    modelProbability,
-    modelProbabilityPct,
-    weatherProbability: modelProbability,
-    weatherProbabilityPct: modelProbabilityPct,
-    forecastProbability: modelProbability,
-    forecastProbabilityPct: modelProbabilityPct,
+    weatherProbability,
+    weatherFairProbability: weatherProbability,
+    weatherProbabilityPct,
+    weatherFairProbabilityPct: weatherProbabilityPct,
+
+    finalProbability,
+    finalProbabilityPct,
+    blendedProbability: finalProbability,
+    blendedProbabilityPct: finalProbabilityPct,
 
     /*
-      Preserve / normalize market side too.
+      Market side.
     */
     marketProbability,
     marketProbabilityPct,
     polymarketProbability: marketProbability,
     polymarketProbabilityPct: marketProbabilityPct,
 
+    gammaProbability,
+    gammaProbabilityPct: probabilityToPct(gammaProbability),
+
+    clobBestBid: clob.bid,
+    clobBestAsk: clob.ask,
+    clobMidpoint: clob.midpoint,
+    clobSpread: clob.spread,
+
     edge,
-    edgePct
+    edgePct,
+    fairEdge: edge,
+    fairEdgePct: edgePct,
+    finalEdge,
+    finalEdgePct
   };
 }
 
