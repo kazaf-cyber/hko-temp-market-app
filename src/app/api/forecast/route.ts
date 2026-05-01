@@ -519,7 +519,17 @@ function numberCandidate(
   };
 }
 
-function pickMaxCandidate(
+function pickFirstCandidate(
+  candidates: Array<NumericCandidate | null>
+): NumericCandidate | null {
+  return (
+    candidates.find(
+      (candidate): candidate is NumericCandidate => candidate !== null
+    ) ?? null
+  );
+}
+
+function pickMinCandidate(
   candidates: Array<NumericCandidate | null>
 ): NumericCandidate | null {
   const valid = candidates.filter(
@@ -531,8 +541,533 @@ function pickMaxCandidate(
   }
 
   return valid.reduce((best, candidate) =>
-    candidate.value > best.value ? candidate : best
+    candidate.value < best.value ? candidate : best
   );
+}
+
+function getRainfallMmFromObservationArray(value: unknown): number | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const records = value.filter(isRecord);
+
+  if (!records.length) {
+    return null;
+  }
+
+  const hkoRecord =
+    records.find((item) =>
+      isHkoStationName(
+        firstString(
+          item.place,
+          item.station,
+          item.name,
+          item.automaticWeatherStation,
+          item.automatic_weather_station
+        )
+      )
+    ) ?? null;
+
+  if (hkoRecord) {
+    const hkoRainfall = firstNumber(
+      hkoRecord.value,
+      hkoRecord.amount,
+      hkoRecord.rainfall,
+      hkoRecord.rainfallMm,
+      hkoRecord.hourlyRainfallMm,
+      hkoRecord.max,
+      hkoRecord.min
+    );
+
+    if (hkoRainfall !== null) {
+      return hkoRainfall;
+    }
+  }
+
+  const values = records
+    .map((item) =>
+      firstNumber(
+        item.max,
+        item.value,
+        item.amount,
+        item.rainfall,
+        item.rainfallMm,
+        item.hourlyRainfallMm,
+        item.min
+      )
+    )
+    .filter((item): item is number => item !== null);
+
+  if (!values.length) {
+    return null;
+  }
+
+  /*
+    HKO rainfall array is often district-based. For a compact dashboard card,
+    the most useful fallback is the highest observed hourly rainfall.
+  */
+  return Math.max(...values);
+}
+
+function getObservedMinSinceMidnightCandidate(
+  forecastRecord: Record<string, unknown>
+): NumericCandidate | null {
+  const directCandidates: Array<[string, unknown, string]> = [
+    [
+      "hkoMinSinceMidnightC",
+      forecastRecord.hkoMinSinceMidnightC,
+      "HKO min since midnight"
+    ],
+    [
+      "minSinceMidnightC",
+      forecastRecord.minSinceMidnightC,
+      "HKO min since midnight"
+    ],
+    ["observedMinC", forecastRecord.observedMinC, "Observed min so far"],
+    ["observedMin", forecastRecord.observedMin, "Observed min so far"],
+    [
+      "observedMinSoFarC",
+      forecastRecord.observedMinSoFarC,
+      "Observed min so far"
+    ],
+    [
+      "observedMinSoFar",
+      forecastRecord.observedMinSoFar,
+      "Observed min so far"
+    ],
+    ["minSoFarC", forecastRecord.minSoFarC, "Observed min so far"],
+    ["minSoFar", forecastRecord.minSoFar, "Observed min so far"],
+    ["todayMinC", forecastRecord.todayMinC, "Observed min so far"],
+    ["todayMin", forecastRecord.todayMin, "Observed min so far"]
+  ];
+
+  const pathCandidates: Array<[string, string[], string]> = [
+    [
+      "weather.sinceMidnight.minTempC",
+      ["weather", "sinceMidnight", "minTempC"],
+      "HKO min since midnight"
+    ],
+    [
+      "weather.sinceMidnight.minTemperatureC",
+      ["weather", "sinceMidnight", "minTemperatureC"],
+      "HKO min since midnight"
+    ],
+    [
+      "weather.sinceMidnight.minTemp",
+      ["weather", "sinceMidnight", "minTemp"],
+      "HKO min since midnight"
+    ],
+    [
+      "weather.sinceMidnight.minTemperature",
+      ["weather", "sinceMidnight", "minTemperature"],
+      "HKO min since midnight"
+    ],
+    [
+      "weather.hkoMinSinceMidnightC",
+      ["weather", "hkoMinSinceMidnightC"],
+      "HKO min since midnight"
+    ],
+    [
+      "weather.minSinceMidnightC",
+      ["weather", "minSinceMidnightC"],
+      "HKO min since midnight"
+    ],
+    [
+      "weather.minSoFarC",
+      ["weather", "minSoFarC"],
+      "Observed min so far"
+    ],
+    [
+      "weather.observedMinSoFarC",
+      ["weather", "observedMinSoFarC"],
+      "Observed min so far"
+    ],
+    [
+      "weather.observedMinC",
+      ["weather", "observedMinC"],
+      "Observed min so far"
+    ],
+    [
+      "weather.todayMinC",
+      ["weather", "todayMinC"],
+      "Observed min so far"
+    ],
+    [
+      "weather.current.minSoFarC",
+      ["weather", "current", "minSoFarC"],
+      "Observed min so far"
+    ],
+    [
+      "weather.current.todayMin",
+      ["weather", "current", "todayMin"],
+      "Observed min so far"
+    ],
+    [
+      "weather.current.minTemperature",
+      ["weather", "current", "minTemperature"],
+      "Observed min so far"
+    ],
+    [
+      "weather.current.minTemperatureC",
+      ["weather", "current", "minTemperatureC"],
+      "Observed min so far"
+    ],
+    [
+      "hko.minSinceMidnightC",
+      ["hko", "minSinceMidnightC"],
+      "HKO min since midnight"
+    ],
+    [
+      "hko.hkoMinSinceMidnightC",
+      ["hko", "hkoMinSinceMidnightC"],
+      "HKO min since midnight"
+    ],
+    [
+      "weatherSnapshot.minSinceMidnightC",
+      ["weatherSnapshot", "minSinceMidnightC"],
+      "HKO min since midnight"
+    ],
+    [
+      "hkoWeatherSnapshot.minSinceMidnightC",
+      ["hkoWeatherSnapshot", "minSinceMidnightC"],
+      "HKO min since midnight"
+    ],
+    [
+      "diagnostics.minSoFarC",
+      ["diagnostics", "minSoFarC"],
+      "Observed min so far"
+    ],
+    [
+      "diagnostics.observedMinSoFarC",
+      ["diagnostics", "observedMinSoFarC"],
+      "Observed min so far"
+    ],
+    [
+      "diagnostics.hkoMinSinceMidnightC",
+      ["diagnostics", "hkoMinSinceMidnightC"],
+      "HKO min since midnight"
+    ]
+  ];
+
+  return pickMinCandidate([
+    ...directCandidates.map(([path, value, source]) =>
+      numberCandidate(path, value, source)
+    ),
+    ...pathCandidates.map(([label, path, source]) =>
+      numberCandidate(label, getAt(forecastRecord, path), source)
+    )
+  ]);
+}
+
+function getOfficialForecastMaxCandidate(
+  forecastRecord: Record<string, unknown>
+): NumericCandidate | null {
+  const directCandidates: Array<[string, unknown, string]> = [
+    [
+      "officialForecastMaxC",
+      forecastRecord.officialForecastMaxC,
+      "HKO official forecast max"
+    ],
+    [
+      "hkoOfficialForecastMaxC",
+      forecastRecord.hkoOfficialForecastMaxC,
+      "HKO official forecast max"
+    ],
+    [
+      "forecastMaxC",
+      forecastRecord.forecastMaxC,
+      "HKO official forecast max"
+    ],
+    [
+      "hkoForecastMaxC",
+      forecastRecord.hkoForecastMaxC,
+      "HKO official forecast max"
+    ],
+    [
+      "officialForecastMax",
+      forecastRecord.officialForecastMax,
+      "HKO official forecast max"
+    ],
+    [
+      "forecastMax",
+      forecastRecord.forecastMax,
+      "HKO official forecast max"
+    ]
+  ];
+
+  const pathCandidates: Array<[string, string[], string]> = [
+    [
+      "weather.officialForecastMaxC",
+      ["weather", "officialForecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.hkoOfficialForecastMaxC",
+      ["weather", "hkoOfficialForecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecastMaxC",
+      ["weather", "forecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.hkoForecastMaxC",
+      ["weather", "hkoForecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecastMax",
+      ["weather", "forecastMax"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecastMaxtemp.value",
+      ["weather", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecastMaxtemp",
+      ["weather", "forecastMaxtemp"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecastMaxTemp.value",
+      ["weather", "forecastMaxTemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecastMaxTemperature.value",
+      ["weather", "forecastMaxTemperature", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecast.maxTempC",
+      ["weather", "forecast", "maxTempC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecast.maxTemperatureC",
+      ["weather", "forecast", "maxTemperatureC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.forecast.forecastMaxtemp.value",
+      ["weather", "forecast", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.localForecast.forecastMaxC",
+      ["weather", "localForecast", "forecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.localForecast.forecastMaxtemp.value",
+      ["weather", "localForecast", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.nineDayWeatherForecast.0.forecastMaxtemp.value",
+      ["weather", "nineDayWeatherForecast", "0", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.weatherForecast.0.forecastMaxtemp.value",
+      ["weather", "weatherForecast", "0", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.raw.nineDayWeatherForecast.0.forecastMaxtemp.value",
+      ["weather", "raw", "nineDayWeatherForecast", "0", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "weather.raw.weatherForecast.0.forecastMaxtemp.value",
+      ["weather", "raw", "weatherForecast", "0", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "hko.officialForecastMaxC",
+      ["hko", "officialForecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "hko.hkoOfficialForecastMaxC",
+      ["hko", "hkoOfficialForecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "hko.forecastMaxC",
+      ["hko", "forecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "hko.forecastMaxtemp.value",
+      ["hko", "forecastMaxtemp", "value"],
+      "HKO official forecast max"
+    ],
+    [
+      "diagnostics.officialForecastMaxC",
+      ["diagnostics", "officialForecastMaxC"],
+      "HKO official forecast max"
+    ],
+    [
+      "diagnostics.hkoOfficialForecastMaxC",
+      ["diagnostics", "hkoOfficialForecastMaxC"],
+      "HKO official forecast max"
+    ]
+  ];
+
+  return pickFirstCandidate([
+    ...directCandidates.map(([path, value, source]) =>
+      numberCandidate(path, value, source)
+    ),
+    ...pathCandidates.map(([label, path, source]) =>
+      numberCandidate(label, getAt(forecastRecord, path), source)
+    )
+  ]);
+}
+
+function getHourlyRainfallCandidate(
+  forecastRecord: Record<string, unknown>
+): NumericCandidate | null {
+  const directCandidates: Array<[string, unknown, string]> = [
+    [
+      "hourlyRainfallMm",
+      forecastRecord.hourlyRainfallMm,
+      "HKO hourly rainfall"
+    ],
+    [
+      "rainfallLastHourMm",
+      forecastRecord.rainfallLastHourMm,
+      "HKO hourly rainfall"
+    ],
+    [
+      "rainfallPastHourMm",
+      forecastRecord.rainfallPastHourMm,
+      "HKO hourly rainfall"
+    ],
+    [
+      "rainHourlyMm",
+      forecastRecord.rainHourlyMm,
+      "HKO hourly rainfall"
+    ],
+    [
+      "rainfallMm",
+      forecastRecord.rainfallMm,
+      "HKO hourly rainfall"
+    ],
+    ["rainfall", forecastRecord.rainfall, "HKO hourly rainfall"]
+  ];
+
+  const pathCandidates: Array<[string, string[], string]> = [
+    [
+      "weather.hourlyRainfallMm",
+      ["weather", "hourlyRainfallMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rainfallLastHourMm",
+      ["weather", "rainfallLastHourMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rainfallPastHourMm",
+      ["weather", "rainfallPastHourMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rainHourlyMm",
+      ["weather", "rainHourlyMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rainfallMm",
+      ["weather", "rainfallMm"],
+      "HKO hourly rainfall"
+    ],
+    ["weather.rainfall", ["weather", "rainfall"], "HKO hourly rainfall"],
+    [
+      "weather.rainfall.value",
+      ["weather", "rainfall", "value"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rain.hourlyRainfallMm",
+      ["weather", "rain", "hourlyRainfallMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rain.rainfallLastHourMm",
+      ["weather", "rain", "rainfallLastHourMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.rain.rainfallMm",
+      ["weather", "rain", "rainfallMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.current.hourlyRainfallMm",
+      ["weather", "current", "hourlyRainfallMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "weather.current.rainfallLastHourMm",
+      ["weather", "current", "rainfallLastHourMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "hko.hourlyRainfallMm",
+      ["hko", "hourlyRainfallMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "hko.rainfallLastHourMm",
+      ["hko", "rainfallLastHourMm"],
+      "HKO hourly rainfall"
+    ],
+    [
+      "diagnostics.hourlyRainfallMm",
+      ["diagnostics", "hourlyRainfallMm"],
+      "HKO hourly rainfall"
+    ]
+  ];
+
+  const arrayCandidates = [
+    numberCandidate(
+      "weather.rainfall.data[max]",
+      getRainfallMmFromObservationArray(
+        getAt(forecastRecord, ["weather", "rainfall", "data"])
+      ),
+      "HKO hourly rainfall"
+    ),
+    numberCandidate(
+      "weather.current.rainfall.data[max]",
+      getRainfallMmFromObservationArray(
+        getAt(forecastRecord, ["weather", "current", "rainfall", "data"])
+      ),
+      "HKO hourly rainfall"
+    ),
+    numberCandidate(
+      "weather.raw.rainfall.data[max]",
+      getRainfallMmFromObservationArray(
+        getAt(forecastRecord, ["weather", "raw", "rainfall", "data"])
+      ),
+      "HKO hourly rainfall"
+    )
+  ];
+
+  return pickFirstCandidate([
+    ...directCandidates.map(([path, value, source]) =>
+      numberCandidate(path, value, source)
+    ),
+    ...pathCandidates.map(([label, path, source]) =>
+      numberCandidate(label, getAt(forecastRecord, path), source)
+    ),
+    ...arrayCandidates
+  ]);
 }
 
 /*
@@ -1288,6 +1823,17 @@ function buildWeatherForDisplay(params: {
   const weatherRecord = recordOrEmpty(forecastRecord.weather);
   const currentRecord = recordOrEmpty(weatherRecord.current);
   const sinceMidnightRecord = recordOrEmpty(weatherRecord.sinceMidnight);
+  const observedMinCandidate =
+  getObservedMinSinceMidnightCandidate(forecastRecord);
+
+const officialForecastMaxCandidate =
+  getOfficialForecastMaxCandidate(forecastRecord);
+
+const hourlyRainfallCandidate =
+  getHourlyRainfallCandidate(forecastRecord);
+
+const officialForecastMaxC = officialForecastMaxCandidate?.value ?? null;
+const hourlyRainfallMm = hourlyRainfallCandidate?.value ?? null;
 
   const displayCurrentTempC = firstNumber(
     forecastRecord.hkoCurrentTempC,
@@ -1364,16 +1910,55 @@ function buildWeatherForDisplay(params: {
   const displaySinceMidnightMaxC =
     displaySinceMidnightMaxCandidate?.value ?? null;
 
-  const existingSinceMidnightMinC = firstNumber(
+ const existingSinceMidnightMinCandidate = pickMinCandidate([
+  observedMinCandidate,
+  numberCandidate(
+    "weather.sinceMidnight.minTempC",
     sinceMidnightRecord.minTempC,
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "weather.sinceMidnight.minTemperatureC",
     sinceMidnightRecord.minTemperatureC,
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "weather.sinceMidnight.minTemp",
     sinceMidnightRecord.minTemp,
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "weather.sinceMidnight.minTemperature",
     sinceMidnightRecord.minTemperature,
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "weather.hkoMinSinceMidnightC",
     weatherRecord.hkoMinSinceMidnightC,
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "weather.minSinceMidnightC",
     weatherRecord.minSinceMidnightC,
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "hkoMinSinceMidnightC",
     forecastRecord.hkoMinSinceMidnightC,
-    forecastRecord.minSinceMidnightC
-  );
+    "HKO min since midnight"
+  ),
+  numberCandidate(
+    "minSinceMidnightC",
+    forecastRecord.minSinceMidnightC,
+    "HKO min since midnight"
+  )
+]);
+
+const existingSinceMidnightMinC =
+  existingSinceMidnightMinCandidate?.value ?? null;
+
+const sinceMidnightMinSource =
+  existingSinceMidnightMinCandidate?.source ?? null;
 
   const sinceMidnightMaxSource =
     existingSinceMidnightMaxC !== null
@@ -1430,6 +2015,20 @@ function buildWeatherForDisplay(params: {
     maxSinceMidnightC: displaySinceMidnightMaxC,
     hkoMinSinceMidnightC: existingSinceMidnightMinC,
     minSinceMidnightC: existingSinceMidnightMinC,
+    hkoMinSinceMidnightSource: sinceMidnightMinSource,
+minSinceMidnightSource: sinceMidnightMinSource,
+
+officialForecastMaxC,
+hkoOfficialForecastMaxC: officialForecastMaxC,
+forecastMaxC: officialForecastMaxC,
+officialForecastMaxSource: officialForecastMaxCandidate?.source ?? null,
+
+hourlyRainfallMm,
+rainfallLastHourMm: hourlyRainfallMm,
+rainfallPastHourMm: hourlyRainfallMm,
+rainHourlyMm: hourlyRainfallMm,
+hourlyRainfallSource: hourlyRainfallCandidate?.source ?? null,
+
 
     current: {
       ...currentRecord,
@@ -1466,6 +2065,7 @@ function buildWeatherForDisplay(params: {
       minTemperatureC: existingSinceMidnightMinC,
       minTemp: existingSinceMidnightMinC,
       minTemperature: existingSinceMidnightMinC,
+      minTempSource: sinceMidnightMinSource,
 
       source:
         firstString(sinceMidnightRecord.source) ??
@@ -2577,16 +3177,62 @@ function getOutcomePoint(row: Record<string, unknown>): number | null {
   return null;
 }
 
+function getOutcomeIntervalForQuantile(
+  row: Record<string, unknown>
+): {
+  lower: number;
+  upper: number;
+} | null {
+  const lower = firstNumber(row.lower);
+  const upper = firstNumber(row.upper);
+
+  if (lower !== null && upper !== null && upper > lower) {
+    return {
+      lower,
+      upper
+    };
+  }
+
+  if (lower !== null && upper === null) {
+    return {
+      lower,
+      upper: lower + 1
+    };
+  }
+
+  if (lower === null && upper !== null) {
+    return {
+      lower: upper - 1,
+      upper
+    };
+  }
+
+  const point = getOutcomePoint(row);
+
+  if (point !== null) {
+    return {
+      lower: point,
+      upper: point
+    };
+  }
+
+  return null;
+}
+
 function deriveEstimatedFinalMaxCFromOutcomes(
   outcomeProbabilities: Record<string, unknown>[]
 ) {
-  const weightedPoints = outcomeProbabilities
+  const buckets = outcomeProbabilities
     .map((row) => {
-      const point = getOutcomePoint(row);
-      const probability = probabilityFromValue(row.probability);
+      const interval = getOutcomeIntervalForQuantile(row);
+      const probability = firstProbability(
+        row.finalProbability,
+        row.blendedProbability,
+        row.probability
+      );
 
       return {
-        point,
+        interval,
         probability
       };
     })
@@ -2594,18 +3240,24 @@ function deriveEstimatedFinalMaxCFromOutcomes(
       (
         item
       ): item is {
-        point: number;
+        interval: {
+          lower: number;
+          upper: number;
+        };
         probability: number;
-      } => item.point !== null && item.probability !== null
+      } => item.interval !== null && item.probability !== null
     )
-    .sort((a, b) => a.point - b.point);
+    .map((item) => ({
+      lower: item.interval.lower,
+      upper: item.interval.upper,
+      probability: Math.max(0, item.probability)
+    }))
+    .filter((item) => item.probability > 0)
+    .sort((a, b) => a.lower - b.lower);
 
-  const total = weightedPoints.reduce(
-    (sum, item) => sum + Math.max(0, item.probability),
-    0
-  );
+  const total = buckets.reduce((sum, item) => sum + item.probability, 0);
 
-  if (!weightedPoints.length || total <= 0) {
+  if (!buckets.length || total <= PROBABILITY_EPSILON) {
     return {
       p10: null,
       p25: null,
@@ -2615,6 +3267,59 @@ function deriveEstimatedFinalMaxCFromOutcomes(
       p90: null
     };
   }
+
+  function quantile(q: number): number | null {
+    const target = q * total;
+    let cumulative = 0;
+
+    for (const bucket of buckets) {
+      const previousCumulative = cumulative;
+      cumulative += bucket.probability;
+
+      if (cumulative + PROBABILITY_EPSILON >= target) {
+        const width = bucket.upper - bucket.lower;
+
+        if (width <= PROBABILITY_EPSILON) {
+          return bucket.lower;
+        }
+
+        /*
+          Instead of returning the bucket midpoint for every quantile,
+          interpolate within the bucket. Example:
+            26.0°C to <27.0°C with 99% mass
+            P10 -> around 26.1°C
+            P50 -> around 26.5°C
+            P90 -> around 26.9°C
+        */
+        const withinBucketProbability =
+          (target - previousCumulative) / bucket.probability;
+
+        const fraction = clampProbability(withinBucketProbability);
+
+        return bucket.lower + width * fraction;
+      }
+    }
+
+    const last = buckets[buckets.length - 1];
+
+    return last ? last.upper : null;
+  }
+
+  const p10 = quantile(0.1);
+  const p25 = quantile(0.25);
+  const median = quantile(0.5);
+  const p75 = quantile(0.75);
+  const p90 = quantile(0.9);
+
+  return {
+    p10,
+    p25,
+    median,
+    p50: median,
+    p75,
+    p90
+  };
+}
 
   function quantile(q: number): number | null {
     const target = q * total;
@@ -3043,15 +3748,23 @@ function normalizeForecastResultForPage(
     hkoMaxSinceMidnightC,
 
     hko: {
-      ...recordOrEmpty(forecastRecord.hko),
-      ...recordOrEmpty(getAt(weatherForDisplay, ["hko"])),
-      currentTempC: hkoCurrentTempC,
-      hkoCurrentTempC,
-      maxSinceMidnightC: hkoMaxSinceMidnightC,
-      hkoMaxSinceMidnightC,
-      observedMaxLowerBoundC: maxSoFarC,
-      observedFinalMaxLowerBoundC: maxSoFarC
-    },
+  ...recordOrEmpty(forecastRecord.hko),
+  ...hkoRecord,
+  currentTempC: displayCurrentTempC,
+  hkoCurrentTempC: displayCurrentTempC,
+  maxSinceMidnightC: displaySinceMidnightMaxC,
+  hkoMaxSinceMidnightC: displaySinceMidnightMaxC,
+  minSinceMidnightC: existingSinceMidnightMinC,
+  hkoMinSinceMidnightC: existingSinceMidnightMinC,
+  officialForecastMaxC,
+  hkoOfficialForecastMaxC: officialForecastMaxC,
+  forecastMaxC: officialForecastMaxC,
+  hourlyRainfallMm,
+  rainfallLastHourMm: hourlyRainfallMm,
+  rainfallPastHourMm: hourlyRainfallMm,
+  observedMaxLowerBoundC: maxSoFarC,
+  observedFinalMaxLowerBoundC: maxSoFarC
+},
 
     aiExplanation,
     keyDrivers,
