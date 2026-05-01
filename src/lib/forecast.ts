@@ -247,6 +247,127 @@ function normalizeName(value: string) {
   return value.trim().toLowerCase();
 }
 
+function getStringFields(value: unknown, keys: string[]) {
+  if (!isRecord(value)) return [];
+
+  const results: string[] = [];
+
+  for (const key of keys) {
+    const parsed = asString(value[key]);
+
+    if (parsed && !results.includes(parsed)) {
+      results.push(parsed);
+    }
+  }
+
+  return results;
+}
+
+function getFirstNormalizedPriceField(value: unknown, keys: string[]) {
+  if (!isRecord(value)) return null;
+
+  for (const key of keys) {
+    const parsed = normalizePrice(value[key]);
+
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function getOutcomeTokenIds(outcome: OutcomeRange) {
+  return getStringFields(outcome, [
+    "clobTokenId",
+    "tokenId",
+    "yesTokenId",
+    "assetId",
+    "yesAssetId"
+  ]);
+}
+
+function getClobYesTokenIds(item: ClobRow) {
+  /*
+    Phase 1 CLOB rows may expose yesTokenId/noTokenId instead of tokenId.
+    For a temperature-range outcome, we want the YES-side token when available.
+    Name matching remains the main fallback, so we intentionally do not map noTokenId
+    to avoid accidentally treating a NO token as a YES probability.
+  */
+  return getStringFields(item, [
+    "tokenId",
+    "clobTokenId",
+    "yesTokenId",
+    "assetId",
+    "yesAssetId"
+  ]);
+}
+
+function getOutcomeGammaPrice(outcome: OutcomeRange) {
+  return getFirstNormalizedPriceField(outcome, [
+    "marketPrice",
+    "price",
+    "gammaPrice",
+    "lastPrice"
+  ]);
+}
+
+function getClobMidpoint(clob: ClobRow | null) {
+  return getFirstNormalizedPriceField(clob, [
+    "midpoint",
+    "mid",
+    "midPrice",
+    "markPrice"
+  ]);
+}
+
+function getClobBuyPrice(clob: ClobRow | null) {
+  return getFirstNormalizedPriceField(clob, [
+    "buyPrice",
+    "bid",
+    "bestBid",
+    "bestBidPrice"
+  ]);
+}
+
+function getClobSellPrice(clob: ClobRow | null) {
+  return getFirstNormalizedPriceField(clob, [
+    "sellPrice",
+    "ask",
+    "bestAsk",
+    "bestAskPrice"
+  ]);
+}
+
+function getClobSpread(clob: ClobRow | null) {
+  const directSpread = getFirstNormalizedPriceField(clob, [
+    "spread",
+    "bidAskSpread"
+  ]);
+
+  if (directSpread !== null) {
+    return directSpread;
+  }
+
+  const buyPrice = getClobBuyPrice(clob);
+  const sellPrice = getClobSellPrice(clob);
+
+  if (buyPrice !== null && sellPrice !== null) {
+    return Math.max(0, sellPrice - buyPrice);
+  }
+
+  return null;
+}
+
+function getClobGammaPrice(clob: ClobRow | null) {
+  return getFirstNormalizedPriceField(clob, [
+    "gammaPrice",
+    "marketPrice",
+    "price",
+    "lastPrice"
+  ]);
+}
+
 function unwrapMarketState(raw: unknown): MarketStateLike {
   if (isRecord(raw)) {
     if (isRecord(raw.state)) {
@@ -740,8 +861,20 @@ function buildClobLookups(snapshot: MultiChannelSnapshot) {
   const byToken = new Map<string, ClobRow>();
 
   for (const item of snapshot.polymarketClob?.outcomes ?? []) {
-    byName.set(normalizeName(item.outcomeName), item);
-    byToken.set(item.tokenId, item);
+    const names = getStringFields(item, [
+      "outcomeName",
+      "name",
+      "title",
+      "outcome"
+    ]);
+
+    for (const name of names) {
+      byName.set(normalizeName(name), item);
+    }
+
+    for (const tokenId of getClobYesTokenIds(item)) {
+      byToken.set(tokenId, item);
+    }
   }
 
   return {
@@ -754,37 +887,36 @@ function findClobRow(
   outcome: OutcomeRange,
   lookups: ReturnType<typeof buildClobLookups>
 ): ClobRow | null {
-  const tokenId = outcome.clobTokenId ?? outcome.tokenId;
-
-  if (tokenId) {
+  for (const tokenId of getOutcomeTokenIds(outcome)) {
     const byToken = lookups.byToken.get(tokenId);
-    if (byToken) return byToken;
+
+    if (byToken) {
+      return byToken;
+    }
   }
 
   return lookups.byName.get(normalizeName(outcome.name)) ?? null;
 }
 
 function getMarketRawPrice(outcome: OutcomeRange, clob: ClobRow | null) {
-  const midpoint = normalizePrice(clob?.midpoint);
+  const midpoint = getClobMidpoint(clob);
+  const buyPrice = getClobBuyPrice(clob);
+  const sellPrice = getClobSellPrice(clob);
 
   const syntheticMidpoint =
-    clob?.buyPrice !== null &&
-    clob?.buyPrice !== undefined &&
-    clob?.sellPrice !== null &&
-    clob?.sellPrice !== undefined
-      ? normalizePrice((clob.buyPrice + clob.sellPrice) / 2)
+    buyPrice !== null && sellPrice !== null
+      ? normalizePrice((buyPrice + sellPrice) / 2)
       : null;
 
-  const gammaFromClob = normalizePrice(clob?.gammaPrice);
-  const gammaFromOutcome = normalizePrice(outcome.marketPrice);
-  const priceFromOutcome = normalizePrice(outcome.price);
+  const gammaFromClob = getClobGammaPrice(clob);
+  const gammaFromOutcome = getOutcomeGammaPrice(outcome);
 
-  return midpoint ?? syntheticMidpoint ?? gammaFromClob ?? gammaFromOutcome ?? priceFromOutcome;
+  return midpoint ?? syntheticMidpoint ?? gammaFromClob ?? gammaFromOutcome;
 }
 
 function getAverageClobSpread(prepared: PreparedOutcome[]) {
   const spreads = prepared
-    .map((item) => normalizePrice(item.clob?.spread))
+    .map((item) => getClobSpread(item.clob))
     .filter((value): value is number => value !== null);
 
   if (spreads.length === 0) return null;
@@ -886,8 +1018,10 @@ function buildExplanationFactors(params: {
     );
   }
 
-  if (params.clob?.midpoint !== null && params.clob?.midpoint !== undefined) {
-    factors.push(`CLOB midpoint available: ${params.clob.midpoint.toFixed(3)}.`);
+  const clobMidpoint = getClobMidpoint(params.clob);
+
+  if (clobMidpoint !== null) {
+    factors.push(`CLOB midpoint available: ${clobMidpoint.toFixed(3)}.`);
   }
 
   return factors;
@@ -1111,11 +1245,14 @@ export function buildForecastFromMultiChannelSnapshot(params: {
 
       marketRawPrice: roundNumber(item.marketRawPrice, 8),
 
-      clobMidpoint: roundNumber(item.clob?.midpoint, 8),
-      clobSpread: roundNumber(item.clob?.spread, 8),
-      clobBuyPrice: roundNumber(item.clob?.buyPrice, 8),
-      clobSellPrice: roundNumber(item.clob?.sellPrice, 8),
-      gammaPrice: roundNumber(item.clob?.gammaPrice ?? item.outcome.marketPrice ?? item.outcome.price, 8),
+      clobMidpoint: roundNumber(getClobMidpoint(item.clob), 8),
+      clobSpread: roundNumber(getClobSpread(item.clob), 8),
+      clobBuyPrice: roundNumber(getClobBuyPrice(item.clob), 8),
+      clobSellPrice: roundNumber(getClobSellPrice(item.clob), 8),
+      gammaPrice: roundNumber(
+        getClobGammaPrice(item.clob) ?? getOutcomeGammaPrice(item.outcome),
+        8
+      ),
 
       isImpossibleByObservedMax: item.impossible,
       explanationFactors: item.explanationFactors
