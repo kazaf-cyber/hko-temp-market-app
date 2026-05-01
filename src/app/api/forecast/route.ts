@@ -300,7 +300,30 @@ function probabilityToPct(value: number | null): number | null {
 function roundProbability(value: number): number {
   return Math.round(clampProbability(value) * 10000) / 10000;
 }
+function getEffectiveMarketWeight(
+  probabilityContext: ProbabilityContext
+): number {
+  /*
+    Route layer should not invent a default market weight.
 
+    The forecast engine is the source of truth for whether CLOB/Gamma prices are
+    sufficient. If the engine did not provide a positive marketWeight, treat
+    the effective blend weight as 0.
+
+    This prevents route.ts from silently applying a 35% market blend when
+    src/lib/forecast.ts has already disabled market blending because market
+    prices are insufficient.
+  */
+  if (!probabilityContext.marketBlendEnabled) {
+    return 0;
+  }
+
+  if (probabilityContext.marketWeight === null) {
+    return 0;
+  }
+
+  return clampProbability(probabilityContext.marketWeight);
+}
 function roundTemperatureC(value: number | null): number | null {
   if (value === null) {
     return null;
@@ -2336,19 +2359,26 @@ function buildKeyDriversFallback(params: {
     addDriver(drivers, "Hourly rainfall is 0 mm.");
   }
 
-  if (!params.probabilityContext.marketBlendEnabled) {
-    addDriver(
-      drivers,
-      "Market blending is disabled or unavailable, so final probabilities may be weather-only or fallback-normalized."
-    );
-  } else if (params.probabilityContext.marketWeight !== null) {
-    addDriver(
-      drivers,
-      `Market blend weight is ${formatProbabilityForDriver(
-        params.probabilityContext.marketWeight
-      )}.`
-    );
-  }
+  const effectiveMarketWeight = getEffectiveMarketWeight(
+  params.probabilityContext
+);
+
+if (
+  !params.probabilityContext.marketBlendEnabled ||
+  effectiveMarketWeight <= PROBABILITY_EPSILON
+) {
+  addDriver(
+    drivers,
+    "CLOB / Gamma market prices are unavailable or insufficient, so market blending is disabled and final probabilities are weather-only or fallback-normalized."
+  );
+} else {
+  addDriver(
+    drivers,
+    `Market blend weight is ${formatProbabilityForDriver(
+      effectiveMarketWeight
+    )}.`
+  );
+}
 
   if (params.warnings.length > 0) {
     addDriver(drivers, `Active warning: ${params.warnings[0]}`);
@@ -2593,17 +2623,28 @@ function collectWarnings(params: {
   }
 
   const marketBlendEnabled = firstBoolean(
-    forecastRecord.marketBlendEnabled,
-    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
-    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"])
-  );
+  forecastRecord.marketBlendEnabled,
+  getAt(forecastRecord, ["model", "marketBlendEnabled"]),
+  getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"]),
+  getAt(forecastRecord, ["diagnostics", "marketBlend", "enabled"])
+);
 
-  if (marketBlendEnabled === false) {
-    addWarning(
-      warnings,
-      "Market blending is disabled or unavailable; final probabilities may be weather-only or fallback-normalized."
-    );
-  }
+const marketWeight = firstProbability(
+  forecastRecord.marketWeight,
+  forecastRecord.marketWeightUsed,
+  getAt(forecastRecord, ["model", "marketWeight"]),
+  getAt(forecastRecord, ["model", "marketWeightUsed"]),
+  getAt(forecastRecord, ["diagnostics", "marketWeight"]),
+  getAt(forecastRecord, ["diagnostics", "marketWeightUsed"]),
+  getAt(forecastRecord, ["diagnostics", "marketBlend", "weight"])
+);
+
+if (marketBlendEnabled === false || marketWeight === 0) {
+  addWarning(
+    warnings,
+    "CLOB / Gamma：市場價格不足，blend 已停用（marketWeight=0）。Final probabilities are weather-only or fallback-normalized."
+  );
+}
 
   return warnings;
 }
@@ -3276,41 +3317,39 @@ function normalizeOutcomeForPage(
     explicitWeatherProbability ??
     (explicitFinalProbability === null ? genericProbability : null);
 
-  const marketWeight =
-    probabilityContext.marketBlendEnabled &&
-    probabilityContext.marketWeight !== null
-      ? clampProbability(probabilityContext.marketWeight)
-      : probabilityContext.marketBlendEnabled
-        ? 0.35
-        : 0;
+  const marketWeight = getEffectiveMarketWeight(probabilityContext);
 
   let finalProbability = explicitFinalProbability;
   let finalProbabilitySource = "explicit_final_probability";
 
-  if (finalProbability === null) {
-    if (
-      probabilityContext.marketBlendEnabled &&
-      weatherProbability !== null &&
-      marketProbability !== null
-    ) {
-      finalProbability = roundProbability(
-        (1 - marketWeight) * weatherProbability +
-          marketWeight * marketProbability
-      );
-      finalProbabilitySource = "route_computed_weather_market_blend";
-    } else {
-      finalProbability =
-        weatherProbability ?? marketProbability ?? genericProbability;
-      finalProbabilitySource =
-        weatherProbability !== null
+ if (finalProbability === null) {
+  if (
+    probabilityContext.marketBlendEnabled &&
+    marketWeight > PROBABILITY_EPSILON &&
+    weatherProbability !== null &&
+    marketProbability !== null
+  ) {
+    finalProbability = roundProbability(
+      (1 - marketWeight) * weatherProbability +
+        marketWeight * marketProbability
+    );
+    finalProbabilitySource = "route_computed_weather_market_blend";
+  } else {
+    finalProbability =
+      weatherProbability ?? marketProbability ?? genericProbability;
+
+    finalProbabilitySource =
+      weatherProbability !== null && marketProbability !== null && marketWeight <= PROBABILITY_EPSILON
+        ? "weather_probability_market_blend_weight_zero"
+        : weatherProbability !== null
           ? "weather_probability"
           : marketProbability !== null
             ? "market_probability"
             : genericProbability !== null
               ? "generic_probability"
               : "missing";
-    }
   }
+}
 
   const finalProbabilityRounded =
     finalProbability === null ? null : roundProbability(finalProbability);
