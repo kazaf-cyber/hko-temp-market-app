@@ -2194,18 +2194,13 @@ export function buildForecastFromMultiChannelSnapshot(params: {
     prepared.length > 0 && eligible.every((value) => !value);
 
   const weatherProbabilities = normalizeScores(
-    prepared.map((item) => item.weatherScore),
-    eligible
-  );
+  prepared.map((item) => item.weatherScore),
+  eligible
+);
 
-  const marketValidCount = prepared.filter(
-    (item) => item.marketRawPrice !== null
-  ).length;
+const marketCoverageStats = getMarketCoverageStats(prepared);
 
-  const marketProbabilitiesAvailable =
-    prepared.length > 0 &&
-    marketValidCount >= 2 &&
-    marketValidCount / prepared.length >= 0.5;
+const marketProbabilitiesAvailable = marketCoverageStats.available;
 
   const marketProbabilities = marketProbabilitiesAvailable
     ? normalizeScores(
@@ -2382,8 +2377,7 @@ const gammaProbability = roundNumber(
       : null;
 
   const averageClobSpread = getAverageClobSpread(prepared);
-  const marketCoverage =
-    prepared.length > 0 ? marketValidCount / prepared.length : 0;
+const marketCoverage = marketCoverageStats.coverage;
 
   const warnings = buildWarnings({
     sourceErrors: params.snapshot.errors,
