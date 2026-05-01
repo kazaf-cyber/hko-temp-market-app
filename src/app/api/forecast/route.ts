@@ -31,6 +31,24 @@ type RunForecastOptions = GetForecastOptions & {
   state?: MarketState | null;
 };
 
+type NumericCandidate = {
+  value: number;
+  source: string;
+  path: string;
+};
+
+type OutcomeRange = {
+  lower: number | null;
+  upper: number | null;
+};
+
+type ProbabilityContext = {
+  marketBlendEnabled: boolean;
+  marketWeight: number | null;
+};
+
+const PROBABILITY_EPSILON = 1e-9;
+
 let databaseInitPromise: Promise<void> | null = null;
 
 function parseBoolean(value: unknown, fallback: boolean) {
@@ -149,6 +167,53 @@ function firstNumber(...values: unknown[]): number | null {
   return null;
 }
 
+function toBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    if (["1", "true", "yes", "y", "on", "enabled"].includes(normalized)) {
+      return true;
+    }
+
+    if (["0", "false", "no", "n", "off", "disabled"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+
+  return null;
+}
+
+function firstBoolean(...values: unknown[]): boolean | null {
+  for (const value of values) {
+    const parsed = toBoolean(value);
+
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> | null {
+  for (const value of values) {
+    if (isRecord(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 function getAt(value: unknown, path: string[]): unknown {
   let current: unknown = value;
 
@@ -172,6 +237,13 @@ function getAt(value: unknown, path: string[]): unknown {
   }
 
   return current;
+}
+
+function firstNumberAtPaths(
+  record: Record<string, unknown>,
+  paths: string[][]
+): number | null {
+  return firstNumber(...paths.map((path) => getAt(record, path)));
 }
 
 function probabilityFromValue(value: unknown): number | null {
@@ -212,40 +284,6 @@ function firstProbability(...values: unknown[]): number | null {
 
   return null;
 }
-function getMarketProbabilityFromRow(
-  row: Record<string, unknown>
-): number | null {
-  return firstProbability(
-    row.marketProbability,
-    row.polymarketProbability,
-    row.marketPrice,
-    row.price,
-    row.clobMidpoint,
-    row.clobMid,
-    row.yesPrice,
-    row.lastPrice,
-    row.bestAsk,
-    row.bestBid,
-    row.clobBestAsk,
-    row.clobBestBid,
-    row.marketProbabilityPct,
-    row.polymarketProbabilityPct,
-    row.marketPct,
-    row.polymarketPct
-  );
-}
-type NumericCandidate = {
-  value: number;
-  source: string;
-  path: string;
-};
-
-type OutcomeRange = {
-  lower: number | null;
-  upper: number | null;
-};
-
-const PROBABILITY_EPSILON = 1e-9;
 
 function clampProbability(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -269,6 +307,146 @@ function roundTemperatureC(value: number | null): number | null {
   }
 
   return Math.round(value * 10) / 10;
+}
+
+function getClobBidAskFromRow(row: Record<string, unknown>): {
+  bid: number | null;
+  ask: number | null;
+  midpoint: number | null;
+  spread: number | null;
+} {
+  const bid = firstProbability(
+    row.clobBestBid,
+    row.bestBid,
+    row.bid,
+    getAt(row, ["clob", "bestBid"]),
+    getAt(row, ["clob", "bid"]),
+    getAt(row, ["market", "clobBestBid"]),
+    getAt(row, ["market", "bestBid"]),
+    getAt(row, ["polymarket", "clobBestBid"]),
+    getAt(row, ["polymarket", "bestBid"])
+  );
+
+  const ask = firstProbability(
+    row.clobBestAsk,
+    row.bestAsk,
+    row.ask,
+    getAt(row, ["clob", "bestAsk"]),
+    getAt(row, ["clob", "ask"]),
+    getAt(row, ["market", "clobBestAsk"]),
+    getAt(row, ["market", "bestAsk"]),
+    getAt(row, ["polymarket", "clobBestAsk"]),
+    getAt(row, ["polymarket", "bestAsk"])
+  );
+
+  const explicitMidpoint = firstProbability(
+    row.clobMidpoint,
+    row.clobMid,
+    row.midpoint,
+    row.mid,
+    getAt(row, ["clob", "midpoint"]),
+    getAt(row, ["clob", "mid"]),
+    getAt(row, ["market", "clobMidpoint"]),
+    getAt(row, ["market", "clobMid"]),
+    getAt(row, ["polymarket", "clobMidpoint"]),
+    getAt(row, ["polymarket", "clobMid"])
+  );
+
+  const midpoint =
+    explicitMidpoint ??
+    (bid !== null && ask !== null ? roundProbability((bid + ask) / 2) : null);
+
+  const explicitSpread = firstProbability(
+    row.clobSpread,
+    row.spread,
+    getAt(row, ["clob", "spread"]),
+    getAt(row, ["market", "clobSpread"]),
+    getAt(row, ["market", "spread"]),
+    getAt(row, ["polymarket", "clobSpread"]),
+    getAt(row, ["polymarket", "spread"])
+  );
+
+  const spread =
+    explicitSpread ??
+    (bid !== null && ask !== null
+      ? roundProbability(Math.max(0, ask - bid))
+      : null);
+
+  return {
+    bid,
+    ask,
+    midpoint,
+    spread
+  };
+}
+
+function getGammaProbabilityFromRow(
+  row: Record<string, unknown>
+): number | null {
+  return firstProbability(
+    row.gammaProbability,
+    row.gammaProbabilityPct,
+    row.gammaPrice,
+    row.gammaMidpoint,
+    row.gammaMid,
+    row.gammaYesPrice,
+    row.gammaLastPrice,
+    getAt(row, ["gamma", "probability"]),
+    getAt(row, ["gamma", "probabilityPct"]),
+    getAt(row, ["gamma", "price"]),
+    getAt(row, ["gamma", "yesPrice"]),
+    getAt(row, ["gamma", "lastPrice"]),
+    getAt(row, ["market", "gammaProbability"]),
+    getAt(row, ["market", "gammaProbabilityPct"]),
+    getAt(row, ["market", "gammaPrice"]),
+    getAt(row, ["polymarket", "gammaProbability"]),
+    getAt(row, ["polymarket", "gammaProbabilityPct"]),
+    getAt(row, ["polymarket", "gammaPrice"])
+  );
+}
+
+function getMarketProbabilityFromRow(
+  row: Record<string, unknown>
+): number | null {
+  const clob = getClobBidAskFromRow(row);
+
+  /*
+    Prefer explicit market probability, then CLOB midpoint, then price aliases.
+    Bid/ask are last-resort fallbacks when midpoint is unavailable.
+  */
+  return firstProbability(
+    row.marketProbability,
+    row.polymarketProbability,
+    row.marketProbabilityPct,
+    row.polymarketProbabilityPct,
+    row.marketPct,
+    row.polymarketPct,
+
+    clob.midpoint,
+
+    row.clobMidpoint,
+    row.clobMid,
+    row.marketPrice,
+    row.price,
+    row.yesPrice,
+    row.lastPrice,
+
+    getAt(row, ["market", "probability"]),
+    getAt(row, ["market", "probabilityPct"]),
+    getAt(row, ["market", "price"]),
+    getAt(row, ["market", "yesPrice"]),
+    getAt(row, ["polymarket", "probability"]),
+    getAt(row, ["polymarket", "probabilityPct"]),
+    getAt(row, ["polymarket", "price"]),
+    getAt(row, ["polymarket", "yesPrice"]),
+
+    row.bestAsk,
+    row.bestBid,
+    row.clobBestAsk,
+    row.clobBestBid,
+    clob.ask,
+    clob.bid
+  );
 }
 
 function normalizeStationName(value: unknown): string {
@@ -358,7 +536,7 @@ function pickMaxCandidate(
 }
 
 /*
-  This is the critical lower-bound rule:
+  Critical lower-bound rule:
 
     final daily max >= max(
       HKO max since midnight,
@@ -372,265 +550,245 @@ function pickMaxCandidate(
 function getObservedMaxLowerBoundCandidate(
   forecastRecord: Record<string, unknown>
 ): NumericCandidate | null {
-  return pickMaxCandidate([
-    numberCandidate(
+  const directCandidates: Array<[string, unknown, string]> = [
+    [
       "observedMaxLowerBoundC",
       forecastRecord.observedMaxLowerBoundC,
       "Observed max lower bound"
-    ),
-    numberCandidate(
+    ],
+    [
       "observedFinalMaxLowerBoundC",
       forecastRecord.observedFinalMaxLowerBoundC,
       "Observed max lower bound"
-    ),
-    numberCandidate(
-      "observedMaxC",
-      forecastRecord.observedMaxC,
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "observedMax",
-      forecastRecord.observedMax,
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "hkoObservedMaxC",
-      forecastRecord.hkoObservedMaxC,
-      "HKO observed max"
-    ),
-    numberCandidate(
+    ],
+    ["observedMaxC", forecastRecord.observedMaxC, "Observed max so far"],
+    ["observedMax", forecastRecord.observedMax, "Observed max so far"],
+    ["hkoObservedMaxC", forecastRecord.hkoObservedMaxC, "HKO observed max"],
+    [
       "hkoMaxSinceMidnightC",
       forecastRecord.hkoMaxSinceMidnightC,
       "HKO max since midnight"
-    ),
-    numberCandidate(
+    ],
+    [
       "maxSinceMidnightC",
       forecastRecord.maxSinceMidnightC,
       "HKO max since midnight"
-    ),
-    numberCandidate(
-      "maxSoFarC",
-      forecastRecord.maxSoFarC,
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "maxSoFar",
-      forecastRecord.maxSoFar,
-      "Observed max so far"
-    ),
-    numberCandidate(
+    ],
+    ["maxSoFarC", forecastRecord.maxSoFarC, "Observed max so far"],
+    ["maxSoFar", forecastRecord.maxSoFar, "Observed max so far"],
+    [
       "observedMaxSoFarC",
       forecastRecord.observedMaxSoFarC,
       "Observed max so far"
-    ),
-    numberCandidate(
+    ],
+    [
       "observedMaxSoFar",
       forecastRecord.observedMaxSoFar,
       "Observed max so far"
-    ),
-
-    numberCandidate(
+    ],
+    [
       "hkoCurrentTempC",
       forecastRecord.hkoCurrentTempC,
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "currentTempC",
       forecastRecord.currentTempC,
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "currentTemperatureC",
       forecastRecord.currentTemperatureC,
       "HKO current temperature fallback"
-    ),
+    ]
+  ];
 
-    numberCandidate(
+  const pathCandidates: Array<[string, string[], string]> = [
+    [
       "weather.sinceMidnight.maxTempC",
-      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTempC"]),
+      ["weather", "sinceMidnight", "maxTempC"],
       "HKO max since midnight"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.sinceMidnight.maxTemperatureC",
-      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTemperatureC"]),
+      ["weather", "sinceMidnight", "maxTemperatureC"],
       "HKO max since midnight"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.sinceMidnight.maxTemp",
-      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTemp"]),
+      ["weather", "sinceMidnight", "maxTemp"],
       "HKO max since midnight"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.sinceMidnight.maxTemperature",
-      getAt(forecastRecord, ["weather", "sinceMidnight", "maxTemperature"]),
+      ["weather", "sinceMidnight", "maxTemperature"],
       "HKO max since midnight"
-    ),
-
-
-    numberCandidate(
+    ],
+    [
       "weather.observedMaxLowerBoundC",
-      getAt(forecastRecord, ["weather", "observedMaxLowerBoundC"]),
+      ["weather", "observedMaxLowerBoundC"],
       "Observed max lower bound"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.observedFinalMaxLowerBoundC",
-      getAt(forecastRecord, ["weather", "observedFinalMaxLowerBoundC"]),
+      ["weather", "observedFinalMaxLowerBoundC"],
       "Observed max lower bound"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.observedMaxC",
-      getAt(forecastRecord, ["weather", "observedMaxC"]),
+      ["weather", "observedMaxC"],
       "Observed max so far"
-    ),
-    numberCandidate(
-      "weather.observedMax",
-      getAt(forecastRecord, ["weather", "observedMax"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "weather.maxSoFarC",
-      getAt(forecastRecord, ["weather", "maxSoFarC"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
+    ],
+    ["weather.observedMax", ["weather", "observedMax"], "Observed max so far"],
+    ["weather.maxSoFarC", ["weather", "maxSoFarC"], "Observed max so far"],
+    [
       "weather.observedMaxSoFarC",
-      getAt(forecastRecord, ["weather", "observedMaxSoFarC"]),
+      ["weather", "observedMaxSoFarC"],
       "Observed max so far"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.hkoMaxSinceMidnightC",
-      getAt(forecastRecord, ["weather", "hkoMaxSinceMidnightC"]),
+      ["weather", "hkoMaxSinceMidnightC"],
       "HKO max since midnight"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.maxSinceMidnightC",
-      getAt(forecastRecord, ["weather", "maxSinceMidnightC"]),
+      ["weather", "maxSinceMidnightC"],
       "HKO max since midnight"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.hkoCurrentTempC",
-      getAt(forecastRecord, ["weather", "hkoCurrentTempC"]),
+      ["weather", "hkoCurrentTempC"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.hkoCurrentTempC",
-      getAt(forecastRecord, ["weather", "current", "hkoCurrentTempC"]),
+      ["weather", "current", "hkoCurrentTempC"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.currentTempC",
-      getAt(forecastRecord, ["weather", "current", "currentTempC"]),
+      ["weather", "current", "currentTempC"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.tempC",
-      getAt(forecastRecord, ["weather", "current", "tempC"]),
+      ["weather", "current", "tempC"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
-      "hko.currentTempC",
-      getAt(forecastRecord, ["hko", "currentTempC"]),
-      "HKO current temperature fallback"
-    ),
-    numberCandidate(
-      "hko.maxSinceMidnightC",
-      getAt(forecastRecord, ["hko", "maxSinceMidnightC"]),
-      "HKO max since midnight"
-    ),
-    numberCandidate(
-      "weatherSnapshot.observedMaxC",
-      getAt(forecastRecord, ["weatherSnapshot", "observedMaxC"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "weatherSnapshot.maxSinceMidnightC",
-      getAt(forecastRecord, ["weatherSnapshot", "maxSinceMidnightC"]),
-      "HKO max since midnight"
-    ),
-    numberCandidate(
-      "weatherSnapshot.currentTempC",
-      getAt(forecastRecord, ["weatherSnapshot", "currentTempC"]),
-      "HKO current temperature fallback"
-    ),
-    numberCandidate(
-      "hkoWeatherSnapshot.observedMaxC",
-      getAt(forecastRecord, ["hkoWeatherSnapshot", "observedMaxC"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "hkoWeatherSnapshot.maxSinceMidnightC",
-      getAt(forecastRecord, ["hkoWeatherSnapshot", "maxSinceMidnightC"]),
-      "HKO max since midnight"
-    ),
-    numberCandidate(
-      "hkoWeatherSnapshot.currentTempC",
-      getAt(forecastRecord, ["hkoWeatherSnapshot", "currentTempC"]),
-      "HKO current temperature fallback"
-    ),
-    
-    numberCandidate(
-      "weather.current.maxSoFarC",
-      getAt(forecastRecord, ["weather", "current", "maxSoFarC"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "weather.current.todayMax",
-      getAt(forecastRecord, ["weather", "current", "todayMax"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "weather.current.maxTemperature",
-      getAt(forecastRecord, ["weather", "current", "maxTemperature"]),
-      "Observed max so far"
-    ),
-
-    numberCandidate(
-      "weather.currentTempC",
-      getAt(forecastRecord, ["weather", "currentTempC"]),
-      "HKO current temperature fallback"
-    ),
-    numberCandidate(
-      "weather.currentTemperatureC",
-      getAt(forecastRecord, ["weather", "currentTemperatureC"]),
-      "HKO current temperature fallback"
-    ),
-    numberCandidate(
-      "weather.temperatureC",
-      getAt(forecastRecord, ["weather", "temperatureC"]),
-      "HKO current temperature fallback"
-    ),
-    numberCandidate(
-      "weather.temperature",
-      getAt(forecastRecord, ["weather", "temperature"]),
-      "HKO current temperature fallback"
-    ),
-
-    numberCandidate(
-      "weather.current.tempC",
-      getAt(forecastRecord, ["weather", "current", "tempC"]),
-      "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.temperatureC",
-      getAt(forecastRecord, ["weather", "current", "temperatureC"]),
+      ["weather", "current", "temperatureC"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.temperature",
-      getAt(forecastRecord, ["weather", "current", "temperature"]),
+      ["weather", "current", "temperature"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.temperature.value",
-      getAt(forecastRecord, ["weather", "current", "temperature", "value"]),
+      ["weather", "current", "temperature", "value"],
       "HKO current temperature fallback"
-    ),
-    numberCandidate(
+    ],
+    [
       "weather.current.airTemperatureC",
-      getAt(forecastRecord, ["weather", "current", "airTemperatureC"]),
+      ["weather", "current", "airTemperatureC"],
       "HKO current temperature fallback"
-    ),
+    ],
+    [
+      "weather.current.maxSoFarC",
+      ["weather", "current", "maxSoFarC"],
+      "Observed max so far"
+    ],
+    [
+      "weather.current.todayMax",
+      ["weather", "current", "todayMax"],
+      "Observed max so far"
+    ],
+    [
+      "weather.current.maxTemperature",
+      ["weather", "current", "maxTemperature"],
+      "Observed max so far"
+    ],
+    [
+      "weather.currentTempC",
+      ["weather", "currentTempC"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "weather.currentTemperatureC",
+      ["weather", "currentTemperatureC"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "weather.temperatureC",
+      ["weather", "temperatureC"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "weather.temperature",
+      ["weather", "temperature"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "hko.currentTempC",
+      ["hko", "currentTempC"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "hko.maxSinceMidnightC",
+      ["hko", "maxSinceMidnightC"],
+      "HKO max since midnight"
+    ],
+    [
+      "weatherSnapshot.observedMaxC",
+      ["weatherSnapshot", "observedMaxC"],
+      "Observed max so far"
+    ],
+    [
+      "weatherSnapshot.maxSinceMidnightC",
+      ["weatherSnapshot", "maxSinceMidnightC"],
+      "HKO max since midnight"
+    ],
+    [
+      "weatherSnapshot.currentTempC",
+      ["weatherSnapshot", "currentTempC"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "hkoWeatherSnapshot.observedMaxC",
+      ["hkoWeatherSnapshot", "observedMaxC"],
+      "Observed max so far"
+    ],
+    [
+      "hkoWeatherSnapshot.maxSinceMidnightC",
+      ["hkoWeatherSnapshot", "maxSinceMidnightC"],
+      "HKO max since midnight"
+    ],
+    [
+      "hkoWeatherSnapshot.currentTempC",
+      ["hkoWeatherSnapshot", "currentTempC"],
+      "HKO current temperature fallback"
+    ],
+    [
+      "diagnostics.maxSoFarC",
+      ["diagnostics", "maxSoFarC"],
+      "Observed max so far"
+    ],
+    [
+      "diagnostics.observedMaxSoFarC",
+      ["diagnostics", "observedMaxSoFarC"],
+      "Observed max so far"
+    ],
+    [
+      "diagnostics.hkoCurrentTempC",
+      ["diagnostics", "hkoCurrentTempC"],
+      "HKO current temperature fallback"
+    ]
+  ];
 
+  const hkoObservationCandidates = [
     numberCandidate(
       "weather.temperature.data[HKO].value",
       getHkoTemperatureFromObservationArray(
@@ -651,23 +809,17 @@ function getObservedMaxLowerBoundCandidate(
         getAt(forecastRecord, ["weather", "raw", "temperature", "data"])
       ),
       "HKO current temperature fallback"
-    ),
-
-    numberCandidate(
-      "diagnostics.maxSoFarC",
-      getAt(forecastRecord, ["diagnostics", "maxSoFarC"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "diagnostics.observedMaxSoFarC",
-      getAt(forecastRecord, ["diagnostics", "observedMaxSoFarC"]),
-      "Observed max so far"
-    ),
-    numberCandidate(
-      "diagnostics.hkoCurrentTempC",
-      getAt(forecastRecord, ["diagnostics", "hkoCurrentTempC"]),
-      "HKO current temperature fallback"
     )
+  ];
+
+  return pickMaxCandidate([
+    ...directCandidates.map(([path, value, source]) =>
+      numberCandidate(path, value, source)
+    ),
+    ...pathCandidates.map(([label, path, source]) =>
+      numberCandidate(label, getAt(forecastRecord, path), source)
+    ),
+    ...hkoObservationCandidates
   ]);
 }
 
@@ -788,6 +940,7 @@ function getOutcomeRange(row: Record<string, unknown>): OutcomeRange {
       ) ?? parsedRange.upper
   };
 }
+
 function isOutcomeImpossibleByObservedMax(
   row: Record<string, unknown>,
   observedMaxC: number
@@ -958,7 +1111,7 @@ function repairOutcomeProbabilitiesForObservedMax(
       1. zero impossible buckets,
       2. renormalize remaining final/weather probabilities if usable,
       3. if no usable model probabilities remain, normalize market probabilities,
-      4. only if both model and market are missing, fallback to observed bucket.
+      4. only if both model and market are missing, fallback to one possible bucket.
   */
   const repaired = rows.map((row) => {
     const probability = firstProbability(
@@ -1017,109 +1170,6 @@ function repairOutcomeProbabilitiesForObservedMax(
       );
     }, 0);
 
-    /*
-      If final/weather probabilities are missing or stale, but market
-      probabilities exist, use normalized market probabilities across buckets
-      still possible after the observed max lower bound.
-    */
-    if (possibleMarketTotal > PROBABILITY_EPSILON) {
-      return repaired.map((row) => {
-        if (row.impossibleByObservedMax === true) {
-          return row;
-        }
-
-        const marketProbability = getMarketProbabilityFromRow(row) ?? 0;
-
-        return setModelProbabilityOnRow(row, marketProbability / possibleMarketTotal, {
-          modelProbabilityRepair:
-            "Final/weather probabilities were missing or stale after observed max repair, so normalized Polymarket probabilities were used across buckets still possible after observed max lower bound."
-        });
-      });
-    }
-
-    /*
-      True last resort only.
-    */
-    return repaired.map((row, index) => {
-      if (row.impossibleByObservedMax === true) {
-        return row;
-      }
-
-      return setModelProbabilityOnRow(row, index === observedBucketIndex ? 1 : 0, {
-        modelProbabilityRepair:
-          index === observedBucketIndex
-            ? "Fallback 100% to bucket containing observed max because final/weather and market probabilities were missing."
-            : "Fallback 0% because final/weather and market probabilities were missing."
-      });
-    });
-  }
-
-  const shouldNormalize = Math.abs(possibleTotal - 1) > 0.005;
-
-  return repaired.map((row) => {
-    if (row.impossibleByObservedMax === true) {
-      return row;
-    }
-
-    const probability =
-      firstProbability(row.finalProbability, row.blendedProbability, row.probability) ??
-      0;
-
-    return setModelProbabilityOnRow(
-      row,
-      shouldNormalize ? probability / possibleTotal : probability,
-      {
-        modelProbabilityRepair: shouldNormalize
-          ? "Renormalized remaining possible buckets after applying observed max lower bound."
-          : row.modelProbabilityRepair ?? null
-      }
-    );
-  });
-}
-
-  const possibleTotal = repaired.reduce((sum, row) => {
-    if (row.impossibleByObservedMax === true) {
-      return sum;
-    }
-
-    const probability = probabilityFromValue(row.probability);
-
-    return sum + (probability === null ? 0 : Math.max(0, probability));
-  }, 0);
-
-  /*
-    If after removing impossible buckets there is no usable model probability,
-    fall back conservatively:
-
-      - observed bucket = 100%
-      - other possible buckets = 0%
-
-    This is not a full weather forecast, but it prevents impossible / missing
-    output and obeys the hard observed lower bound.
-  */
- if (possibleTotal <= PROBABILITY_EPSILON) {
-    const possibleMarketTotal = repaired.reduce((sum, row) => {
-      if (row.impossibleByObservedMax === true) {
-        return sum;
-      }
-
-      const marketProbability = getMarketProbabilityFromRow(row);
-
-      return sum + (marketProbability === null ? 0 : Math.max(0, marketProbability));
-    }, 0);
-
-    /*
-      If model probabilities are missing, but market probabilities exist,
-      use normalized market probabilities across still-possible buckets.
-
-      Example:
-        observed max = 25.0°C
-        26°C market = 96%
-        27°C market = 6%
-        28°C market = 1%
-
-      Then model distribution should not stay "--".
-    */
     if (possibleMarketTotal > PROBABILITY_EPSILON) {
       return repaired.map((row) => {
         if (row.impossibleByObservedMax === true) {
@@ -1133,22 +1183,28 @@ function repairOutcomeProbabilitiesForObservedMax(
           marketProbability / possibleMarketTotal,
           {
             modelProbabilityRepair:
-              "Model probabilities were missing, so normalized market probabilities were used across buckets still possible after observed max lower bound."
+              "Final/weather probabilities were missing or stale after observed max repair, so normalized Polymarket probabilities were used across buckets still possible after observed max lower bound."
           }
         );
       });
     }
+
+    const fallbackBucketIndex =
+      observedBucketIndex >= 0
+        ? observedBucketIndex
+        : repaired.findIndex((row) => row.impossibleByObservedMax !== true);
 
     return repaired.map((row, index) => {
       if (row.impossibleByObservedMax === true) {
         return row;
       }
 
-      return setModelProbabilityOnRow(row, index === observedBucketIndex ? 1 : 0, {
-        modelProbabilityRepair:
-          index === observedBucketIndex
-            ? "Fallback 100% to bucket containing observed max because both model and market probabilities were missing."
-            : "Fallback 0% because both model and market probabilities were missing."
+      const isFallbackBucket = index === fallbackBucketIndex;
+
+      return setModelProbabilityOnRow(row, isFallbackBucket ? 1 : 0, {
+        modelProbabilityRepair: isFallbackBucket
+          ? "Fallback 100% to one still-possible bucket because final/weather and market probabilities were missing."
+          : "Fallback 0% because final/weather and market probabilities were missing."
       });
     });
   }
@@ -1160,14 +1216,19 @@ function repairOutcomeProbabilitiesForObservedMax(
       return row;
     }
 
-    const probability = probabilityFromValue(row.probability) ?? 0;
+    const probability =
+      firstProbability(
+        row.finalProbability,
+        row.blendedProbability,
+        row.probability
+      ) ?? 0;
 
     return setModelProbabilityOnRow(
       row,
       shouldNormalize ? probability / possibleTotal : probability,
       {
         modelProbabilityRepair: shouldNormalize
-          ? "Renormalized after applying observed max lower bound."
+          ? "Renormalized remaining possible buckets after applying observed max lower bound."
           : row.modelProbabilityRepair ?? null
       }
     );
@@ -1357,8 +1418,6 @@ function buildWeatherForDisplay(params: {
     observedMaxSoFarC: maxSoFarC,
     observedMaxSoFarSource: maxSoFarSource,
 
-  
-
     /*
       Top-level aliases for UI.
     */
@@ -1432,10 +1491,17 @@ function buildWeatherForDisplay(params: {
     }
   };
 }
+
 function stringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) {
     return null;
   }
+
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : null))
+    .filter((item): item is string => Boolean(item));
+}
+
 function warningStrings(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1655,8 +1721,14 @@ function collectWarnings(params: {
   addWarning(warnings, sourceStatusWarning("HKO", sourceStatus.hko));
   addWarning(warnings, sourceStatusWarning("Open-Meteo", sourceStatus.openMeteo));
   addWarning(warnings, sourceStatusWarning("Windy", sourceStatus.windy));
-  addWarning(warnings, sourceStatusWarning("Polymarket Gamma", sourceStatus.gamma));
-  addWarning(warnings, sourceStatusWarning("Polymarket CLOB", sourceStatus.clob));
+  addWarning(
+    warnings,
+    sourceStatusWarning("Polymarket Gamma", sourceStatus.gamma)
+  );
+  addWarning(
+    warnings,
+    sourceStatusWarning("Polymarket CLOB", sourceStatus.clob)
+  );
 
   for (const [sourceName, paths] of Object.entries({
     Windy: [
@@ -1730,430 +1802,438 @@ function getStateOutcomeRows(state: MarketState | null | undefined): unknown[] {
     return [];
   }
 
-+  const stateRecord = recordOrEmpty(state);
-+  const candidates = [
-+    stateRecord.outcomes,
-+    stateRecord.probabilities,
-+    stateRecord.outcomeProbabilities,
-+    getAt(stateRecord, ["market", "outcomes"]),
-+    getAt(stateRecord, ["market", "probabilities"]),
-+    getAt(stateRecord, ["polymarket", "outcomes"]),
-+    getAt(stateRecord, ["polymarket", "probabilities"])
-+  ];
-+
-+  for (const candidate of candidates) {
-+    if (Array.isArray(candidate) && candidate.length > 0) {
-+      return candidate;
-+    }
-+  }
-+
-+  return [];
-+}
-+
-+function getForecastOutcomeRows(forecastRecord: Record<string, unknown>): unknown[] {
-+  /*
-+    Prefer the forecast engine's explicit probability rows over raw outcomes.
-+    Raw outcomes often contain only labels/prices.
-+  */
-+  if (Array.isArray(forecastRecord.outcomeProbabilities)) {
-+    return forecastRecord.outcomeProbabilities;
-+  }
-+
-+  if (Array.isArray(forecastRecord.probabilities)) {
-+    return forecastRecord.probabilities;
-+  }
-+
-+  if (Array.isArray(forecastRecord.outcomes)) {
-+    return forecastRecord.outcomes;
-+  }
-+
-+  return [];
-+}
-+
-+function normalizeOutcomeNameKey(value: unknown): string {
-+  return String(value ?? "")
-+    .trim()
-+    .toLowerCase()
-+    .replace(/℃/g, "°c")
-+    .replace(/\s+/g, " ")
-+    .replace(/[^a-z0-9°+\-. ]/g, "");
-+}
-+
-+function outcomeNameKey(row: Record<string, unknown>): string | null {
-+  const name = firstString(row.name, row.outcome, row.label, row.title);
-+
-+  if (!name) {
-+    return null;
-+  }
-+
-+  const key = normalizeOutcomeNameKey(name);
-+
-+  return key ? `name:${key}` : null;
-+}
-+
-+function outcomeRangeKey(row: Record<string, unknown>): string | null {
-+  const range = getOutcomeRange(row);
-+
-+  if (range.lower === null && range.upper === null) {
-+    return null;
-+  }
-+
-+  return `range:${range.lower ?? ""}:${range.upper ?? ""}`;
-+}
-+
-+function mergeStateOutcomeWithForecastOutcome(params: {
-+  stateRow: Record<string, unknown>;
-+  forecastRow: Record<string, unknown> | null;
-+}): Record<string, unknown> {
-+  const { stateRow, forecastRow } = params;
-+
-+  if (!forecastRow) {
-+    return {
-+      ...stateRow,
-+      outcomeUniverseSource: "state.outcomes",
-+      forecastOutcomeMatched: false
-+    };
-+  }
-+
-+  /*
-+    Start with forecast row so source/model fields exist, then overlay state row
-+    because Admin state is the outcome universe source of truth.
-+  */
-+  const merged: Record<string, unknown> = {
-+    ...forecastRow,
-+    ...stateRow,
-+    outcomeUniverseSource: "state.outcomes",
-+    forecastOutcomeMatched: true
-+  };
-+
-+  /*
-+    But probability fields from the engine should not be overwritten by Admin
-+    price-only state rows.
-+  */
-+  for (const key of [
-+    "probability",
-+    "probabilityPct",
-+    "modelProbability",
-+    "modelProbabilityPct",
-+    "weatherProbability",
-+    "weatherProbabilityPct",
-+    "weatherFairProbability",
-+    "weatherFairProbabilityPct",
-+    "forecastProbability",
-+    "forecastProbabilityPct",
-+    "finalProbability",
-+    "finalProbabilityPct",
-+    "blendedProbability",
-+    "blendedProbabilityPct"
-+  ]) {
-+    if (forecastRow[key] !== undefined) {
-+      merged[key] = forecastRow[key];
-+    }
-+  }
-+
-+  const stateName = firstString(
-+    stateRow.name,
-+    stateRow.outcome,
-+    stateRow.label,
-+    stateRow.title
-+  );
-+
-+  if (stateName) {
-+    merged.name = stateName;
-+  }
-+
-+  const stateRange = getOutcomeRange(stateRow);
-+
-+  if (stateRange.lower !== null) {
-+    merged.lower = stateRange.lower;
-+  }
-+
-+  if (stateRange.upper !== null) {
-+    merged.upper = stateRange.upper;
-+  }
-+
-+  return merged;
-+}
-+
-+function buildRawOutcomeRows(params: {
-+  forecastRecord: Record<string, unknown>;
-+  state: MarketState | null | undefined;
-+}): {
-+  rows: unknown[];
-+  source: string;
-+} {
-+  const forecastRows = getForecastOutcomeRows(params.forecastRecord).map(
-+    (row) => recordOrEmpty(row)
-+  );
-+
-+  const stateRows = getStateOutcomeRows(params.state).map((row) =>
-+    recordOrEmpty(row)
-+  );
-+
-+  if (!stateRows.length) {
-+    return {
-+      rows: forecastRows,
-+      source:
-+        Array.isArray(params.forecastRecord.outcomeProbabilities)
-+          ? "forecast.outcomeProbabilities"
-+          : Array.isArray(params.forecastRecord.probabilities)
-+            ? "forecast.probabilities"
-+            : Array.isArray(params.forecastRecord.outcomes)
-+              ? "forecast.outcomes"
-+              : "none"
-+    };
-+  }
-+
-+  const usedForecastIndexes = new Set<number>();
-+
-+  const rows = stateRows.map((stateRow, index) => {
-+    const stateNameKey = outcomeNameKey(stateRow);
-+    const stateRangeKey = outcomeRangeKey(stateRow);
-+
-+    let matchIndex = forecastRows.findIndex((forecastRow, forecastIndex) => {
-+      if (usedForecastIndexes.has(forecastIndex)) {
-+        return false;
-+      }
-+
-+      return (
-+        (stateNameKey !== null && outcomeNameKey(forecastRow) === stateNameKey) ||
-+        (stateRangeKey !== null && outcomeRangeKey(forecastRow) === stateRangeKey)
-+      );
-+    });
-+
-+    /*
-+      Fallback by index if labels changed but the row count/order is the same.
-+    */
-+    if (
-+      matchIndex < 0 &&
-+      forecastRows.length === stateRows.length &&
-+      !usedForecastIndexes.has(index)
-+    ) {
-+      matchIndex = index;
-+    }
-+
-+    const forecastRow = matchIndex >= 0 ? forecastRows[matchIndex] : null;
-+
-+    if (matchIndex >= 0) {
-+      usedForecastIndexes.add(matchIndex);
-+    }
-+
-+    return mergeStateOutcomeWithForecastOutcome({
-+      stateRow,
-+      forecastRow
-+    });
-+  });
-+
-+  return {
-+    rows,
-+    source: "state.outcomes"
-+  };
-+}
-+
-+function getProbabilityContext(
-+  forecastRecord: Record<string, unknown>
-+): ProbabilityContext {
-+  const explicitBlendEnabled = firstBoolean(
-+    forecastRecord.marketBlendEnabled,
-+    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
-+    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"]),
-+    getAt(forecastRecord, ["diagnostics", "marketBlend", "enabled"])
-+  );
-+
-+  const marketBlendEnabled = explicitBlendEnabled ?? true;
-+
-+  const marketWeight =
-+    firstProbability(
-+      forecastRecord.marketWeight,
-+      forecastRecord.marketWeightUsed,
-+      getAt(forecastRecord, ["model", "marketWeight"]),
-+      getAt(forecastRecord, ["model", "marketWeightUsed"]),
-+      getAt(forecastRecord, ["diagnostics", "marketWeight"]),
-+      getAt(forecastRecord, ["diagnostics", "marketWeightUsed"]),
-+      getAt(forecastRecord, ["diagnostics", "marketBlend", "weight"])
-+    ) ?? null;
-+
-+  return {
-+    marketBlendEnabled,
-+    marketWeight
-+  };
-+}
-+
-+function getDisplayConfidence(params: {
-+  forecastRecord: Record<string, unknown>;
-+  outcomeProbabilities: Record<string, unknown>[];
-+  warnings: string[];
-+}): number | null {
-+  const explicitConfidence = firstProbability(
-+    params.forecastRecord.confidence,
-+    getAt(params.forecastRecord, ["summary", "confidence"]),
-+    getAt(params.forecastRecord, ["model", "confidence"]),
-+    getAt(params.forecastRecord, ["diagnostics", "confidence"])
-+  );
-+
-+  if (explicitConfidence !== null) {
-+    return roundProbability(explicitConfidence);
-+  }
-+
-+  const hasWeatherProbability = params.outcomeProbabilities.some(
-+    (row) =>
-+      firstProbability(row.weatherProbability, row.weatherFairProbability) !== null
-+  );
-+
-+  const hasMarketProbability = params.outcomeProbabilities.some(
-+    (row) => getMarketProbabilityFromRow(row) !== null
-+  );
-+
-+  const hasFinalProbability = params.outcomeProbabilities.some(
-+    (row) =>
-+      firstProbability(row.finalProbability, row.blendedProbability, row.probability) !==
-+      null
-+  );
-+
-+  if (!hasWeatherProbability && !hasMarketProbability && !hasFinalProbability) {
-+    return null;
-+  }
-+
-+  const warningPenalty = Math.min(0.25, params.warnings.length * 0.05);
-+
-+  const derived =
-+    0.25 +
-+    (hasWeatherProbability ? 0.25 : 0) +
-+    (hasMarketProbability ? 0.25 : 0) +
-+    (hasFinalProbability ? 0.15 : 0) -
-+    warningPenalty;
-+
-+  return roundProbability(Math.max(0.1, Math.min(0.9, derived)));
-+}
-+
-+function buildMultiChannelForecastJson(
-+  result: ForecastResult
-+): Record<string, unknown> {
-+  const resultRecord = recordOrEmpty(result);
-+  const weatherRecord = recordOrEmpty(resultRecord.weather);
-+  const marketRecord = recordOrEmpty(resultRecord.market);
-+  const polymarketRecord = recordOrEmpty(resultRecord.polymarket);
-+  const diagnosticsRecord = recordOrEmpty(resultRecord.diagnostics);
-+
-+  const rows = Array.isArray(resultRecord.outcomeProbabilities)
-+    ? resultRecord.outcomeProbabilities.map((row) => recordOrEmpty(row))
-+    : [];
-+
-+  return {
-+    schemaVersion: "phase2.multi_channel_forecast_json.v1",
-+    generatedAt: resultRecord.generatedAt ?? null,
-+    hktDate:
-+      firstString(
-+        resultRecord.hktDate,
-+        resultRecord.forecastDate,
-+        resultRecord.date
-+      ) ?? null,
-+
-+    outcomeUniverse: rows.map((row) => ({
-+      name: row.name ?? null,
-+      lower: row.lower ?? null,
-+      upper: row.upper ?? null
-+    })),
-+
-+    weatherChannels: {
-+      hko: {
-+        currentTempC:
-+          resultRecord.hkoCurrentTempC ??
-+          getAt(weatherRecord, ["current", "hkoCurrentTempC"]) ??
-+          getAt(weatherRecord, ["currentTempC"]) ??
-+          null,
-+        maxSoFarC:
-+          resultRecord.maxSoFarC ??
-+          resultRecord.observedMaxSoFarC ??
-+          resultRecord.observedFinalMaxLowerBoundC ??
-+          null,
-+        maxSinceMidnightC:
-+          resultRecord.hkoMaxSinceMidnightC ??
-+          getAt(weatherRecord, ["sinceMidnight", "maxTempC"]) ??
-+          getAt(weatherRecord, ["maxSinceMidnightC"]) ??
-+          null
-+      },
-+      openMeteo:
-+        firstRecord(
-+          weatherRecord.openMeteo,
-+          weatherRecord.open_meteo,
-+          resultRecord.openMeteo,
-+          resultRecord.open_meteo,
-+          getAt(diagnosticsRecord, ["sourceStatus", "openMeteo"])
-+        ) ?? null,
-+      windy:
-+        firstRecord(
-+          weatherRecord.windy,
-+          resultRecord.windy,
-+          getAt(diagnosticsRecord, ["sourceStatus", "windy"])
-+        ) ?? null,
-+      rain: {
-+        rainfallMm:
-+          weatherRecord.rainfallMm ??
-+          weatherRecord.rainfall ??
-+          getAt(weatherRecord, ["rain", "rainfallMm"]) ??
-+          null,
-+        cloudCover:
-+          weatherRecord.cloudCover ??
-+          weatherRecord.cloudCoverPct ??
-+          getAt(weatherRecord, ["cloud", "cover"]) ??
-+          getAt(weatherRecord, ["cloud", "coverPct"]) ??
-+          null,
-+        rainProbability:
-+          weatherRecord.rainProbability ??
-+          weatherRecord.rainProbabilityPct ??
-+          getAt(weatherRecord, ["rain", "probability"]) ??
-+          getAt(weatherRecord, ["rain", "probabilityPct"]) ??
-+          null
-+      }
-+    },
-+
-+    marketChannels: {
-+      gamma:
-+        firstRecord(
-+          marketRecord.gamma,
-+          polymarketRecord.gamma,
-+          resultRecord.gamma,
-+          getAt(diagnosticsRecord, ["sourceStatus", "gamma"])
-+        ) ?? null,
-+      clob:
-+        firstRecord(
-+          marketRecord.clob,
-+          polymarketRecord.clob,
-+          resultRecord.clob,
-+          getAt(diagnosticsRecord, ["sourceStatus", "clob"])
-+        ) ?? null
-+    },
-+
-+    outcomeProbabilities: rows.map((row) => ({
-+      name: row.name ?? null,
-+      lower: row.lower ?? null,
-+      upper: row.upper ?? null,
-+      weatherProbability:
-+        firstProbability(row.weatherProbability, row.weatherFairProbability) ?? null,
-+      marketProbability: getMarketProbabilityFromRow(row),
-+      finalProbability:
-+        firstProbability(row.finalProbability, row.blendedProbability, row.probability) ??
-+        null,
-+      gammaProbability: getGammaProbabilityFromRow(row),
-+      clobBestBid: row.clobBestBid ?? null,
-+      clobBestAsk: row.clobBestAsk ?? null,
-+      clobMidpoint: row.clobMidpoint ?? null,
-+      clobSpread: row.clobSpread ?? null,
-+      edge: row.edge ?? null,
-+      finalEdge: row.finalEdge ?? null
-+    })),
-+
-+    topOutcome: resultRecord.topOutcome ?? null,
-+    confidence: resultRecord.confidence ?? null,
-+    diagnostics: resultRecord.diagnostics ?? null,
-+    warnings: resultRecord.warnings ?? [],
-+    diagnostics: diagnosticsRecord
-+  };
-+}
-  return value.filter(
-    (item): item is string => typeof item === "string" && item.trim() !== ""
+  const stateRecord = recordOrEmpty(state);
+
+  const candidates = [
+    stateRecord.outcomes,
+    stateRecord.probabilities,
+    stateRecord.outcomeProbabilities,
+    getAt(stateRecord, ["market", "outcomes"]),
+    getAt(stateRecord, ["market", "probabilities"]),
+    getAt(stateRecord, ["polymarket", "outcomes"]),
+    getAt(stateRecord, ["polymarket", "probabilities"])
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      return candidate;
+    }
+  }
+
+  return [];
+}
+
+function getForecastOutcomeRows(
+  forecastRecord: Record<string, unknown>
+): unknown[] {
+  /*
+    Prefer the forecast engine's explicit probability rows over raw outcomes.
+    Raw outcomes often contain only labels/prices.
+  */
+  if (Array.isArray(forecastRecord.outcomeProbabilities)) {
+    return forecastRecord.outcomeProbabilities;
+  }
+
+  if (Array.isArray(forecastRecord.probabilities)) {
+    return forecastRecord.probabilities;
+  }
+
+  if (Array.isArray(forecastRecord.outcomes)) {
+    return forecastRecord.outcomes;
+  }
+
+  return [];
+}
+
+function normalizeOutcomeNameKey(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/℃/g, "°c")
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9°+\-. ]/g, "");
+}
+
+function outcomeNameKey(row: Record<string, unknown>): string | null {
+  const name = firstString(row.name, row.outcome, row.label, row.title);
+
+  if (!name) {
+    return null;
+  }
+
+  const key = normalizeOutcomeNameKey(name);
+
+  return key ? `name:${key}` : null;
+}
+
+function outcomeRangeKey(row: Record<string, unknown>): string | null {
+  const range = getOutcomeRange(row);
+
+  if (range.lower === null && range.upper === null) {
+    return null;
+  }
+
+  return `range:${range.lower ?? ""}:${range.upper ?? ""}`;
+}
+
+function mergeStateOutcomeWithForecastOutcome(params: {
+  stateRow: Record<string, unknown>;
+  forecastRow: Record<string, unknown> | null;
+}): Record<string, unknown> {
+  const { stateRow, forecastRow } = params;
+
+  if (!forecastRow) {
+    return {
+      ...stateRow,
+      outcomeUniverseSource: "state.outcomes",
+      forecastOutcomeMatched: false
+    };
+  }
+
+  /*
+    Start with forecast row so source/model fields exist, then overlay state row
+    because Admin state is the outcome universe source of truth.
+  */
+  const merged: Record<string, unknown> = {
+    ...forecastRow,
+    ...stateRow,
+    outcomeUniverseSource: "state.outcomes",
+    forecastOutcomeMatched: true
+  };
+
+  /*
+    But probability fields from the engine should not be overwritten by Admin
+    price-only state rows.
+  */
+  for (const key of [
+    "probability",
+    "probabilityPct",
+    "modelProbability",
+    "modelProbabilityPct",
+    "weatherProbability",
+    "weatherProbabilityPct",
+    "weatherFairProbability",
+    "weatherFairProbabilityPct",
+    "forecastProbability",
+    "forecastProbabilityPct",
+    "finalProbability",
+    "finalProbabilityPct",
+    "blendedProbability",
+    "blendedProbabilityPct"
+  ]) {
+    if (forecastRow[key] !== undefined) {
+      merged[key] = forecastRow[key];
+    }
+  }
+
+  const stateName = firstString(
+    stateRow.name,
+    stateRow.outcome,
+    stateRow.label,
+    stateRow.title
   );
+
+  if (stateName) {
+    merged.name = stateName;
+  }
+
+  const stateRange = getOutcomeRange(stateRow);
+
+  if (stateRange.lower !== null) {
+    merged.lower = stateRange.lower;
+  }
+
+  if (stateRange.upper !== null) {
+    merged.upper = stateRange.upper;
+  }
+
+  return merged;
+}
+
+function buildRawOutcomeRows(params: {
+  forecastRecord: Record<string, unknown>;
+  state: MarketState | null | undefined;
+}): {
+  rows: unknown[];
+  source: string;
+} {
+  const forecastRows = getForecastOutcomeRows(params.forecastRecord).map(
+    (row) => recordOrEmpty(row)
+  );
+
+  const stateRows = getStateOutcomeRows(params.state).map((row) =>
+    recordOrEmpty(row)
+  );
+
+  if (!stateRows.length) {
+    return {
+      rows: forecastRows,
+      source:
+        Array.isArray(params.forecastRecord.outcomeProbabilities)
+          ? "forecast.outcomeProbabilities"
+          : Array.isArray(params.forecastRecord.probabilities)
+            ? "forecast.probabilities"
+            : Array.isArray(params.forecastRecord.outcomes)
+              ? "forecast.outcomes"
+              : "none"
+    };
+  }
+
+  const usedForecastIndexes = new Set<number>();
+
+  const rows = stateRows.map((stateRow, index) => {
+    const stateNameKey = outcomeNameKey(stateRow);
+    const stateRangeKey = outcomeRangeKey(stateRow);
+
+    let matchIndex = forecastRows.findIndex((forecastRow, forecastIndex) => {
+      if (usedForecastIndexes.has(forecastIndex)) {
+        return false;
+      }
+
+      return (
+        (stateNameKey !== null &&
+          outcomeNameKey(forecastRow) === stateNameKey) ||
+        (stateRangeKey !== null &&
+          outcomeRangeKey(forecastRow) === stateRangeKey)
+      );
+    });
+
+    /*
+      Fallback by index if labels changed but the row count/order is the same.
+    */
+    if (
+      matchIndex < 0 &&
+      forecastRows.length === stateRows.length &&
+      !usedForecastIndexes.has(index)
+    ) {
+      matchIndex = index;
+    }
+
+    const forecastRow = matchIndex >= 0 ? forecastRows[matchIndex] : null;
+
+    if (matchIndex >= 0) {
+      usedForecastIndexes.add(matchIndex);
+    }
+
+    return mergeStateOutcomeWithForecastOutcome({
+      stateRow,
+      forecastRow
+    });
+  });
+
+  return {
+    rows,
+    source: "state.outcomes"
+  };
+}
+
+function getProbabilityContext(
+  forecastRecord: Record<string, unknown>
+): ProbabilityContext {
+  const explicitBlendEnabled = firstBoolean(
+    forecastRecord.marketBlendEnabled,
+    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
+    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"]),
+    getAt(forecastRecord, ["diagnostics", "marketBlend", "enabled"])
+  );
+
+  const marketBlendEnabled = explicitBlendEnabled ?? true;
+
+  const marketWeight =
+    firstProbability(
+      forecastRecord.marketWeight,
+      forecastRecord.marketWeightUsed,
+      getAt(forecastRecord, ["model", "marketWeight"]),
+      getAt(forecastRecord, ["model", "marketWeightUsed"]),
+      getAt(forecastRecord, ["diagnostics", "marketWeight"]),
+      getAt(forecastRecord, ["diagnostics", "marketWeightUsed"]),
+      getAt(forecastRecord, ["diagnostics", "marketBlend", "weight"])
+    ) ?? null;
+
+  return {
+    marketBlendEnabled,
+    marketWeight
+  };
+}
+
+function getDisplayConfidence(params: {
+  forecastRecord: Record<string, unknown>;
+  outcomeProbabilities: Record<string, unknown>[];
+  warnings: string[];
+}): number | null {
+  const explicitConfidence = firstProbability(
+    params.forecastRecord.confidence,
+    getAt(params.forecastRecord, ["summary", "confidence"]),
+    getAt(params.forecastRecord, ["model", "confidence"]),
+    getAt(params.forecastRecord, ["diagnostics", "confidence"])
+  );
+
+  if (explicitConfidence !== null) {
+    return roundProbability(explicitConfidence);
+  }
+
+  const hasWeatherProbability = params.outcomeProbabilities.some(
+    (row) =>
+      firstProbability(row.weatherProbability, row.weatherFairProbability) !==
+      null
+  );
+
+  const hasMarketProbability = params.outcomeProbabilities.some(
+    (row) => getMarketProbabilityFromRow(row) !== null
+  );
+
+  const hasFinalProbability = params.outcomeProbabilities.some(
+    (row) =>
+      firstProbability(
+        row.finalProbability,
+        row.blendedProbability,
+        row.probability
+      ) !== null
+  );
+
+  if (!hasWeatherProbability && !hasMarketProbability && !hasFinalProbability) {
+    return null;
+  }
+
+  const warningPenalty = Math.min(0.25, params.warnings.length * 0.05);
+
+  const derived =
+    0.25 +
+    (hasWeatherProbability ? 0.25 : 0) +
+    (hasMarketProbability ? 0.25 : 0) +
+    (hasFinalProbability ? 0.15 : 0) -
+    warningPenalty;
+
+  return roundProbability(Math.max(0.1, Math.min(0.9, derived)));
+}
+
+function buildMultiChannelForecastJson(
+  result: ForecastResult
+): Record<string, unknown> {
+  const resultRecord = recordOrEmpty(result);
+  const weatherRecord = recordOrEmpty(resultRecord.weather);
+  const marketRecord = recordOrEmpty(resultRecord.market);
+  const polymarketRecord = recordOrEmpty(resultRecord.polymarket);
+  const diagnosticsRecord = recordOrEmpty(resultRecord.diagnostics);
+
+  const rows = Array.isArray(resultRecord.outcomeProbabilities)
+    ? resultRecord.outcomeProbabilities.map((row) => recordOrEmpty(row))
+    : [];
+
+  return {
+    schemaVersion: "phase2.multi_channel_forecast_json.v1",
+    generatedAt: resultRecord.generatedAt ?? null,
+    hktDate:
+      firstString(
+        resultRecord.hktDate,
+        resultRecord.forecastDate,
+        resultRecord.date
+      ) ?? null,
+
+    outcomeUniverse: rows.map((row) => ({
+      name: row.name ?? null,
+      lower: row.lower ?? null,
+      upper: row.upper ?? null
+    })),
+
+    weatherChannels: {
+      hko: {
+        currentTempC:
+          resultRecord.hkoCurrentTempC ??
+          getAt(weatherRecord, ["current", "hkoCurrentTempC"]) ??
+          getAt(weatherRecord, ["currentTempC"]) ??
+          null,
+        maxSoFarC:
+          resultRecord.maxSoFarC ??
+          resultRecord.observedMaxSoFarC ??
+          resultRecord.observedFinalMaxLowerBoundC ??
+          null,
+        maxSinceMidnightC:
+          resultRecord.hkoMaxSinceMidnightC ??
+          getAt(weatherRecord, ["sinceMidnight", "maxTempC"]) ??
+          getAt(weatherRecord, ["maxSinceMidnightC"]) ??
+          null
+      },
+      openMeteo:
+        firstRecord(
+          weatherRecord.openMeteo,
+          weatherRecord.open_meteo,
+          resultRecord.openMeteo,
+          resultRecord.open_meteo,
+          getAt(diagnosticsRecord, ["sourceStatus", "openMeteo"])
+        ) ?? null,
+      windy:
+        firstRecord(
+          weatherRecord.windy,
+          resultRecord.windy,
+          getAt(diagnosticsRecord, ["sourceStatus", "windy"])
+        ) ?? null,
+      rain: {
+        rainfallMm:
+          weatherRecord.rainfallMm ??
+          weatherRecord.rainfall ??
+          getAt(weatherRecord, ["rain", "rainfallMm"]) ??
+          null,
+        cloudCover:
+          weatherRecord.cloudCover ??
+          weatherRecord.cloudCoverPct ??
+          getAt(weatherRecord, ["cloud", "cover"]) ??
+          getAt(weatherRecord, ["cloud", "coverPct"]) ??
+          null,
+        rainProbability:
+          weatherRecord.rainProbability ??
+          weatherRecord.rainProbabilityPct ??
+          getAt(weatherRecord, ["rain", "probability"]) ??
+          getAt(weatherRecord, ["rain", "probabilityPct"]) ??
+          null
+      }
+    },
+
+    marketChannels: {
+      gamma:
+        firstRecord(
+          marketRecord.gamma,
+          polymarketRecord.gamma,
+          resultRecord.gamma,
+          getAt(diagnosticsRecord, ["sourceStatus", "gamma"])
+        ) ?? null,
+      clob:
+        firstRecord(
+          marketRecord.clob,
+          polymarketRecord.clob,
+          resultRecord.clob,
+          getAt(diagnosticsRecord, ["sourceStatus", "clob"])
+        ) ?? null
+    },
+
+    outcomeProbabilities: rows.map((row) => ({
+      name: row.name ?? null,
+      lower: row.lower ?? null,
+      upper: row.upper ?? null,
+      weatherProbability:
+        firstProbability(row.weatherProbability, row.weatherFairProbability) ??
+        null,
+      marketProbability: getMarketProbabilityFromRow(row),
+      finalProbability:
+        firstProbability(
+          row.finalProbability,
+          row.blendedProbability,
+          row.probability
+        ) ?? null,
+      gammaProbability: getGammaProbabilityFromRow(row),
+      clobBestBid: row.clobBestBid ?? null,
+      clobBestAsk: row.clobBestAsk ?? null,
+      clobMidpoint: row.clobMidpoint ?? null,
+      clobSpread: row.clobSpread ?? null,
+      edge: row.edge ?? null,
+      finalEdge: row.finalEdge ?? null
+    })),
+
+    topOutcome: resultRecord.topOutcome ?? null,
+    confidence: resultRecord.confidence ?? null,
+    warnings: resultRecord.warnings ?? [],
+    diagnostics: diagnosticsRecord
+  };
 }
 
 function formatHktDate(date: Date) {
@@ -2365,7 +2445,8 @@ function normalizeOutcomeForPage(
     (explicitFinalProbability === null ? genericProbability : null);
 
   const marketWeight =
-    probabilityContext.marketBlendEnabled && probabilityContext.marketWeight !== null
+    probabilityContext.marketBlendEnabled &&
+    probabilityContext.marketWeight !== null
       ? clampProbability(probabilityContext.marketWeight)
       : probabilityContext.marketBlendEnabled
         ? 0.35
@@ -2381,11 +2462,13 @@ function normalizeOutcomeForPage(
       marketProbability !== null
     ) {
       finalProbability = roundProbability(
-        (1 - marketWeight) * weatherProbability + marketWeight * marketProbability
+        (1 - marketWeight) * weatherProbability +
+          marketWeight * marketProbability
       );
       finalProbabilitySource = "route_computed_weather_market_blend";
     } else {
-      finalProbability = weatherProbability ?? marketProbability ?? genericProbability;
+      finalProbability =
+        weatherProbability ?? marketProbability ?? genericProbability;
       finalProbabilitySource =
         weatherProbability !== null
           ? "weather_probability"
@@ -2572,144 +2655,140 @@ function buildEstimatedFinalMaxCForPage(
   const derived = deriveEstimatedFinalMaxCFromOutcomes(outcomeProbabilities);
 
   const p10 =
-    firstNumber(
-      getAt(forecastRecord, ["estimatedFinalMaxC", "p10"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p10"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMax", "p10"]),
-      getAt(forecastRecord, ["estimatedFinalMax", "p10"]),
-      getAt(forecastRecord, ["finalDailyMax", "p10"]),
-      getAt(forecastRecord, ["percentiles", "p10"]),
-      getAt(forecastRecord, ["quantiles", "p10"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p10"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p10"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p10"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMax", "p10"]),
-      getAt(forecastRecord, ["model", "percentiles", "p10"]),
-      getAt(forecastRecord, ["model", "quantiles", "p10"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p10"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p10"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p10"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p10"]),
-      getAt(forecastRecord, ["diagnostics", "percentiles", "p10"]),
-      getAt(forecastRecord, ["diagnostics", "quantiles", "p10"])
-    ) ?? derived.p10;
+    firstNumberAtPaths(forecastRecord, [
+      ["estimatedFinalMaxC", "p10"],
+      ["estimatedFinalDailyMaxC", "p10"],
+      ["estimatedFinalDailyMax", "p10"],
+      ["estimatedFinalMax", "p10"],
+      ["finalDailyMax", "p10"],
+      ["percentiles", "p10"],
+      ["quantiles", "p10"],
+      ["model", "estimatedFinalMaxC", "p10"],
+      ["model", "estimatedFinalDailyMaxC", "p10"],
+      ["model", "estimatedFinalDailyMax", "p10"],
+      ["model", "estimatedFinalMax", "p10"],
+      ["model", "percentiles", "p10"],
+      ["model", "quantiles", "p10"],
+      ["diagnostics", "estimatedFinalMaxC", "p10"],
+      ["diagnostics", "estimatedFinalDailyMaxC", "p10"],
+      ["diagnostics", "estimatedFinalDailyMax", "p10"],
+      ["diagnostics", "estimatedFinalMax", "p10"],
+      ["diagnostics", "percentiles", "p10"],
+      ["diagnostics", "quantiles", "p10"]
+    ]) ?? derived.p10;
 
   const p25 =
-    firstNumber(
-      getAt(forecastRecord, ["estimatedFinalMaxC", "p25"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p25"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMax", "p25"]),
-      getAt(forecastRecord, ["estimatedFinalMax", "p25"]),
-      getAt(forecastRecord, ["finalDailyMax", "p25"]),
-      getAt(forecastRecord, ["percentiles", "p25"]),
-      getAt(forecastRecord, ["quantiles", "p25"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p25"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p25"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p25"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMax", "p25"]),
-      getAt(forecastRecord, ["model", "percentiles", "p25"]),
-      getAt(forecastRecord, ["model", "quantiles", "p25"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p25"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p25"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p25"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p25"]),
-      getAt(forecastRecord, ["diagnostics", "percentiles", "p25"]),
-      getAt(forecastRecord, ["diagnostics", "quantiles", "p25"])
-    ) ?? derived.p25;
+    firstNumberAtPaths(forecastRecord, [
+      ["estimatedFinalMaxC", "p25"],
+      ["estimatedFinalDailyMaxC", "p25"],
+      ["estimatedFinalDailyMax", "p25"],
+      ["estimatedFinalMax", "p25"],
+      ["finalDailyMax", "p25"],
+      ["percentiles", "p25"],
+      ["quantiles", "p25"],
+      ["model", "estimatedFinalMaxC", "p25"],
+      ["model", "estimatedFinalDailyMaxC", "p25"],
+      ["model", "estimatedFinalDailyMax", "p25"],
+      ["model", "estimatedFinalMax", "p25"],
+      ["model", "percentiles", "p25"],
+      ["model", "quantiles", "p25"],
+      ["diagnostics", "estimatedFinalMaxC", "p25"],
+      ["diagnostics", "estimatedFinalDailyMaxC", "p25"],
+      ["diagnostics", "estimatedFinalDailyMax", "p25"],
+      ["diagnostics", "estimatedFinalMax", "p25"],
+      ["diagnostics", "percentiles", "p25"],
+      ["diagnostics", "quantiles", "p25"]
+    ]) ?? derived.p25;
 
   const median =
-    firstNumber(
-      getAt(forecastRecord, ["estimatedFinalMaxC", "median"]),
-      getAt(forecastRecord, ["estimatedFinalMaxC", "p50"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "median"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p50"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMax", "median"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMax", "p50"]),
-      getAt(forecastRecord, ["estimatedFinalMax", "median"]),
-      getAt(forecastRecord, ["estimatedFinalMax", "p50"]),
-      getAt(forecastRecord, ["finalDailyMax", "median"]),
-      getAt(forecastRecord, ["finalDailyMax", "p50"]),
-      getAt(forecastRecord, ["percentiles", "median"]),
-      getAt(forecastRecord, ["percentiles", "p50"]),
-      getAt(forecastRecord, ["quantiles", "median"]),
-      getAt(forecastRecord, ["quantiles", "p50"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "median"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p50"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "median"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p50"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "median"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p50"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMax", "median"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMax", "p50"]),
-      getAt(forecastRecord, ["model", "percentiles", "median"]),
-      getAt(forecastRecord, ["model", "percentiles", "p50"]),
-      getAt(forecastRecord, ["model", "quantiles", "median"]),
-      getAt(forecastRecord, ["model", "quantiles", "p50"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "median"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p50"]),
-      getAt(forecastRecord, [
-        "diagnostics",
-        "estimatedFinalDailyMaxC",
-        "median"
-      ]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p50"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "median"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p50"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "median"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p50"]),
-      getAt(forecastRecord, ["diagnostics", "percentiles", "median"]),
-      getAt(forecastRecord, ["diagnostics", "percentiles", "p50"]),
-      getAt(forecastRecord, ["diagnostics", "quantiles", "median"]),
-      getAt(forecastRecord, ["diagnostics", "quantiles", "p50"])
-    ) ?? derived.median;
+    firstNumberAtPaths(forecastRecord, [
+      ["estimatedFinalMaxC", "median"],
+      ["estimatedFinalMaxC", "p50"],
+      ["estimatedFinalDailyMaxC", "median"],
+      ["estimatedFinalDailyMaxC", "p50"],
+      ["estimatedFinalDailyMax", "median"],
+      ["estimatedFinalDailyMax", "p50"],
+      ["estimatedFinalMax", "median"],
+      ["estimatedFinalMax", "p50"],
+      ["finalDailyMax", "median"],
+      ["finalDailyMax", "p50"],
+      ["percentiles", "median"],
+      ["percentiles", "p50"],
+      ["quantiles", "median"],
+      ["quantiles", "p50"],
+      ["model", "estimatedFinalMaxC", "median"],
+      ["model", "estimatedFinalMaxC", "p50"],
+      ["model", "estimatedFinalDailyMaxC", "median"],
+      ["model", "estimatedFinalDailyMaxC", "p50"],
+      ["model", "estimatedFinalDailyMax", "median"],
+      ["model", "estimatedFinalDailyMax", "p50"],
+      ["model", "estimatedFinalMax", "median"],
+      ["model", "estimatedFinalMax", "p50"],
+      ["model", "percentiles", "median"],
+      ["model", "percentiles", "p50"],
+      ["model", "quantiles", "median"],
+      ["model", "quantiles", "p50"],
+      ["diagnostics", "estimatedFinalMaxC", "median"],
+      ["diagnostics", "estimatedFinalMaxC", "p50"],
+      ["diagnostics", "estimatedFinalDailyMaxC", "median"],
+      ["diagnostics", "estimatedFinalDailyMaxC", "p50"],
+      ["diagnostics", "estimatedFinalDailyMax", "median"],
+      ["diagnostics", "estimatedFinalDailyMax", "p50"],
+      ["diagnostics", "estimatedFinalMax", "median"],
+      ["diagnostics", "estimatedFinalMax", "p50"],
+      ["diagnostics", "percentiles", "median"],
+      ["diagnostics", "percentiles", "p50"],
+      ["diagnostics", "quantiles", "median"],
+      ["diagnostics", "quantiles", "p50"]
+    ]) ?? derived.median;
 
   const p75 =
-    firstNumber(
-      getAt(forecastRecord, ["estimatedFinalMaxC", "p75"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p75"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMax", "p75"]),
-      getAt(forecastRecord, ["estimatedFinalMax", "p75"]),
-      getAt(forecastRecord, ["finalDailyMax", "p75"]),
-      getAt(forecastRecord, ["percentiles", "p75"]),
-      getAt(forecastRecord, ["quantiles", "p75"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p75"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p75"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p75"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMax", "p75"]),
-      getAt(forecastRecord, ["model", "percentiles", "p75"]),
-      getAt(forecastRecord, ["model", "quantiles", "p75"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p75"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p75"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p75"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p75"]),
-      getAt(forecastRecord, ["diagnostics", "percentiles", "p75"]),
-      getAt(forecastRecord, ["diagnostics", "quantiles", "p75"])
-    ) ?? derived.p75;
+    firstNumberAtPaths(forecastRecord, [
+      ["estimatedFinalMaxC", "p75"],
+      ["estimatedFinalDailyMaxC", "p75"],
+      ["estimatedFinalDailyMax", "p75"],
+      ["estimatedFinalMax", "p75"],
+      ["finalDailyMax", "p75"],
+      ["percentiles", "p75"],
+      ["quantiles", "p75"],
+      ["model", "estimatedFinalMaxC", "p75"],
+      ["model", "estimatedFinalDailyMaxC", "p75"],
+      ["model", "estimatedFinalDailyMax", "p75"],
+      ["model", "estimatedFinalMax", "p75"],
+      ["model", "percentiles", "p75"],
+      ["model", "quantiles", "p75"],
+      ["diagnostics", "estimatedFinalMaxC", "p75"],
+      ["diagnostics", "estimatedFinalDailyMaxC", "p75"],
+      ["diagnostics", "estimatedFinalDailyMax", "p75"],
+      ["diagnostics", "estimatedFinalMax", "p75"],
+      ["diagnostics", "percentiles", "p75"],
+      ["diagnostics", "quantiles", "p75"]
+    ]) ?? derived.p75;
 
   const p90 =
-    firstNumber(
-      getAt(forecastRecord, ["estimatedFinalMaxC", "p90"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMaxC", "p90"]),
-      getAt(forecastRecord, ["estimatedFinalDailyMax", "p90"]),
-      getAt(forecastRecord, ["estimatedFinalMax", "p90"]),
-      getAt(forecastRecord, ["finalDailyMax", "p90"]),
-      getAt(forecastRecord, ["percentiles", "p90"]),
-      getAt(forecastRecord, ["quantiles", "p90"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMaxC", "p90"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMaxC", "p90"]),
-      getAt(forecastRecord, ["model", "estimatedFinalDailyMax", "p90"]),
-      getAt(forecastRecord, ["model", "estimatedFinalMax", "p90"]),
-      getAt(forecastRecord, ["model", "percentiles", "p90"]),
-      getAt(forecastRecord, ["model", "quantiles", "p90"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMaxC", "p90"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMaxC", "p90"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalDailyMax", "p90"]),
-      getAt(forecastRecord, ["diagnostics", "estimatedFinalMax", "p90"]),
-      getAt(forecastRecord, ["diagnostics", "percentiles", "p90"]),
-      getAt(forecastRecord, ["diagnostics", "quantiles", "p90"])
-    ) ?? derived.p90;
+    firstNumberAtPaths(forecastRecord, [
+      ["estimatedFinalMaxC", "p90"],
+      ["estimatedFinalDailyMaxC", "p90"],
+      ["estimatedFinalDailyMax", "p90"],
+      ["estimatedFinalMax", "p90"],
+      ["finalDailyMax", "p90"],
+      ["percentiles", "p90"],
+      ["quantiles", "p90"],
+      ["model", "estimatedFinalMaxC", "p90"],
+      ["model", "estimatedFinalDailyMaxC", "p90"],
+      ["model", "estimatedFinalDailyMax", "p90"],
+      ["model", "estimatedFinalMax", "p90"],
+      ["model", "percentiles", "p90"],
+      ["model", "quantiles", "p90"],
+      ["diagnostics", "estimatedFinalMaxC", "p90"],
+      ["diagnostics", "estimatedFinalDailyMaxC", "p90"],
+      ["diagnostics", "estimatedFinalDailyMax", "p90"],
+      ["diagnostics", "estimatedFinalMax", "p90"],
+      ["diagnostics", "percentiles", "p90"],
+      ["diagnostics", "quantiles", "p90"]
+    ]) ?? derived.p90;
 
-   return clampEstimatedFinalMaxC(
+  return clampEstimatedFinalMaxC(
     {
       /*
         Prefer repaired outcome-derived distribution.
@@ -2732,7 +2811,6 @@ function normalizeForecastResultForPage(
   aiCommentary: AiCommentary,
   state: MarketState | null = null
 ): ForecastResult {
-  
   const forecastRecord = recordOrEmpty(forecast);
 
   const observedMaxCandidate =
@@ -2740,7 +2818,7 @@ function normalizeForecastResultForPage(
 
   const observedMaxLowerBoundC = observedMaxCandidate?.value ?? null;
 
- const rawOutcomeBuild = buildRawOutcomeRows({
+  const rawOutcomeBuild = buildRawOutcomeRows({
     forecastRecord,
     state
   });
@@ -2792,8 +2870,8 @@ function normalizeForecastResultForPage(
     maxSoFarC,
     maxSoFarSource
   });
-  
- const hkoCurrentTempC = firstNumber(
+
+  const hkoCurrentTempC = firstNumber(
     getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]),
     getAt(weatherForDisplay, ["current", "currentTempC"]),
     getAt(weatherForDisplay, ["current", "currentTemperatureC"]),
@@ -2840,13 +2918,20 @@ function normalizeForecastResultForPage(
 
     maxSoFarC
   );
- const calculatedTopOutcome =
+
+  const calculatedTopOutcome =
     [...outcomeProbabilities].sort(
       (a, b) =>
-        (firstProbability(b.finalProbability, b.blendedProbability, b.probability) ??
-          -Infinity) -
-        (firstProbability(a.finalProbability, a.blendedProbability, a.probability) ??
-          -Infinity)
+        (firstProbability(
+          b.finalProbability,
+          b.blendedProbability,
+          b.probability
+        ) ?? -Infinity) -
+        (firstProbability(
+          a.finalProbability,
+          a.blendedProbability,
+          a.probability
+        ) ?? -Infinity)
     )[0] ?? null;
 
   const topOutcome = calculatedTopOutcome ?? forecastRecord.topOutcome ?? null;
@@ -2920,7 +3005,9 @@ function normalizeForecastResultForPage(
     observedFinalMaxLowerBoundSource: maxSoFarSource,
     observedFinalMaxLowerBoundPath: observedMaxCandidate?.path ?? null,
     sourceDiagnostics: {
-      ...recordOrEmpty(getAt(forecastRecord, ["diagnostics", "sourceDiagnostics"])),
+      ...recordOrEmpty(
+        getAt(forecastRecord, ["diagnostics", "sourceDiagnostics"])
+      ),
       observedFinalMaxLowerBound: {
         valueC: maxSoFarC,
         source: maxSoFarSource,
@@ -2966,7 +3053,7 @@ function normalizeForecastResultForPage(
       observedFinalMaxLowerBoundC: maxSoFarC
     },
 
-     aiExplanation,
+    aiExplanation,
     keyDrivers,
     warnings,
     confidence,
@@ -3060,7 +3147,7 @@ async function saveHistoryIfRequested(params: {
     return await saveForecastRun({
       hktDate: getForecastHktDate(params.forecast),
       state: params.state,
-      weather: params.forecast.weather as unknown as HkoWeatherSnapshot,
+      weather: getAt(params.forecast, ["weather"]) as unknown as HkoWeatherSnapshot,
       result: resultForHistory
     });
   } catch (error) {
@@ -3101,11 +3188,12 @@ function buildForecastPayload(params: {
     getAiExplanationText(params.aiCommentary);
 
   const weatherForDisplay = (resultRecord.weather ??
-    (params.forecast as Forecast & { weather?: unknown }).weather ??
+    getAt(params.forecast, ["weather"]) ??
     {}) as HkoWeatherSnapshot;
 
-   const multiChannelForecastJson =
+  const multiChannelForecastJson =
     buildMultiChannelForecastJson(resultForDisplay);
+
   const data = {
     ...resultRecord,
 
@@ -3116,6 +3204,7 @@ function buildForecastPayload(params: {
     forecast: resultForDisplay,
     weather: weatherForDisplay,
     multiChannelForecastJson,
+
     /*
       Poe AI aliases.
     */
@@ -3266,12 +3355,13 @@ async function runForecast(options: RunForecastOptions) {
     aiCommentary
   });
 
- return buildForecastPayload({
+  return buildForecastPayload({
     forecast,
     aiCommentary,
     historySave,
     state: options.state ?? null
   });
+}
 
 export async function GET(request: Request) {
   try {
@@ -3288,9 +3378,9 @@ export async function GET(request: Request) {
     */
     const ai = true;
 
-    const marketWeightOverride = parseNumber(
-      url.searchParams.get("marketWeight")
-    );
+    const marketWeightOverride =
+      parseNumber(url.searchParams.get("marketWeight")) ??
+      parseNumber(url.searchParams.get("marketWeightOverride"));
 
     const payload = await runForecast({
       includeClob,
@@ -3330,6 +3420,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const url = new URL(request.url);
+
     let body: Record<string, unknown> = {};
 
     try {
@@ -3360,6 +3452,8 @@ export async function POST(request: Request) {
     const saveHistory = parseBoolean(body.saveHistory, false);
 
     const marketWeightOverride =
+      parseNumber(body.marketWeight) ??
+      parseNumber(body.marketWeightOverride) ??
       parseNumber(url.searchParams.get("marketWeight")) ??
       parseNumber(url.searchParams.get("marketWeightOverride"));
 
