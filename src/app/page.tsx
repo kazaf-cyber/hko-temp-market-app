@@ -761,20 +761,32 @@ async function loadPolymarketOutcomes() {
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="text-slate-400">
-                  <tr>
-                    <th className="border-b border-slate-800 py-3 pr-4">
-                      Outcome
-                    </th>
-                    <th className="border-b border-slate-800 py-3 pr-4">
-                      Range
-                    </th>
-                    <th className="border-b border-slate-800 py-3 pr-4">
-                      Probability
-                    </th>
-                    <th className="border-b border-slate-800 py-3">Bar</th>
-                  </tr>
-                </thead>
+  <tr>
+    <th className="border-b border-slate-800 py-3 pr-4">
+      Outcome
+    </th>
 
+    <th className="border-b border-slate-800 py-3 pr-4">
+      Range
+    </th>
+
+    <th className="border-b border-slate-800 py-3 pr-4">
+      Polymarket
+    </th>
+
+    <th className="border-b border-slate-800 py-3 pr-4">
+      Model
+    </th>
+
+    <th className="border-b border-slate-800 py-3 pr-4">
+      Edge
+    </th>
+
+    <th className="border-b border-slate-800 py-3">
+      Bar
+    </th>
+  </tr>
+</thead>
                 <tbody>
                   
                   {state.outcomes.map((outcome) => {
@@ -807,17 +819,17 @@ async function loadPolymarketOutcomes() {
                        {formatPercent(probability)}
                     </td>
 
-<td
-  className={
-    edge !== null && edge > 0
-      ? "border-b border-slate-800 py-3 pr-4 text-emerald-300"
-      : edge !== null && edge < 0
-        ? "border-b border-slate-800 py-3 pr-4 text-red-300"
-        : "border-b border-slate-800 py-3 pr-4 text-slate-400"
-  }
->
-  {formatSignedPercent(edge)}
-</td>
+                    <td
+                      className={
+                   edge !== null && edge > 0
+                      ? "border-b border-slate-800 py-3 pr-4 text-emerald-300"
+                     : edge !== null && edge < 0
+                     ? "border-b border-slate-800 py-3 pr-4 text-red-300"
+                     : "border-b border-slate-800 py-3 pr-4 text-slate-400"
+                     }
+                     >
+                    {formatSignedPercent(edge)}
+                      </td>
                         <td className="border-b border-slate-800 py-3">
                           <div className="h-3 w-full rounded-full bg-slate-800">
                             <div
