@@ -4,12 +4,34 @@ const CLOB_API = "https://clob.polymarket.com";
 
 export type ClobOutcomePrice = {
   outcomeName: string;
-  tokenId: string;
-  gammaPrice: number | null;
+
+  yesTokenId: string | null;
+  noTokenId: string | null;
+
+  gammaYesPrice: number | null;
+  gammaNoPrice: number | null;
+
+  /**
+   * Buy Yes / Buy No as shown by Polymarket buttons, if endpoint matches.
+   */
+  yesAsk: number | null;
+  noAsk: number | null;
+
+  /**
+   * Implied YES bid from Buy No:
+   * yesBid = 1 - noAsk
+   */
+  yesBid: number | null;
+
+  /**
+   * Preferred market probability.
+   */
   midpoint: number | null;
+
+  /**
+   * Spread between yesAsk and yesBid.
+   */
   spread: number | null;
-  buyPrice: number | null;
-  sellPrice: number | null;
 };
 
 export type PolymarketClobSnapshot = {
@@ -24,7 +46,9 @@ export type PolymarketClobSnapshot = {
 };
 
 function num(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
 
   if (typeof value === "string") {
     const parsed = Number(value);
@@ -62,57 +86,119 @@ async function fetchJsonOrNull(url: string): Promise<unknown | null> {
   return response.json();
 }
 
-async function getTokenClobData(outcome: OutcomeRange): Promise<ClobOutcomePrice> {
-  const tokenId = outcome.clobTokenId ?? outcome.tokenId;
+async function getBuyPrice(tokenId: string | null | undefined) {
+  if (!tokenId) return null;
 
-  if (!tokenId) {
-    throw new Error(`Outcome ${outcome.name} has no clobTokenId/tokenId.`);
+  const raw = await fetchJsonOrNull(
+    `${CLOB_API}/price?token_id=${encodeURIComponent(tokenId)}&side=BUY`
+  );
+
+  return firstNumberFromObject(raw, ["price", "value"]);
+}
+
+async function getMidpoint(tokenId: string | null | undefined) {
+  if (!tokenId) return null;
+
+  const raw = await fetchJsonOrNull(
+    `${CLOB_API}/midpoint?token_id=${encodeURIComponent(tokenId)}`
+  );
+
+  return firstNumberFromObject(raw, ["mid", "midpoint", "mid_price", "price"]);
+}
+
+async function getSpread(tokenId: string | null | undefined) {
+  if (!tokenId) return null;
+
+  const raw = await fetchJsonOrNull(
+    `${CLOB_API}/spread?token_id=${encodeURIComponent(tokenId)}`
+  );
+
+  return firstNumberFromObject(raw, ["spread", "value"]);
+}
+
+function getGammaYesPrice(outcome: OutcomeRange) {
+  if (typeof outcome.yesPrice === "number") return outcome.yesPrice;
+  if (typeof outcome.marketPrice === "number") return outcome.marketPrice;
+  if (typeof outcome.price === "number") return outcome.price;
+  return null;
+}
+
+function getGammaNoPrice(outcome: OutcomeRange) {
+  if (typeof outcome.noPrice === "number") return outcome.noPrice;
+  return null;
+}
+
+async function getOutcomeClobData(
+  outcome: OutcomeRange
+): Promise<ClobOutcomePrice> {
+  const yesTokenId =
+    outcome.yesTokenId ?? outcome.clobTokenId ?? outcome.tokenId ?? null;
+
+  const noTokenId = outcome.noTokenId ?? null;
+
+  if (!yesTokenId && !noTokenId) {
+    throw new Error(`Outcome ${outcome.name} has no YES/NO token IDs.`);
   }
 
-  const [midpointRaw, spreadRaw, buyRaw, sellRaw] = await Promise.all([
-    fetchJsonOrNull(`${CLOB_API}/midpoint?token_id=${encodeURIComponent(tokenId)}`),
-    fetchJsonOrNull(`${CLOB_API}/spread?token_id=${encodeURIComponent(tokenId)}`),
-    fetchJsonOrNull(
-      `${CLOB_API}/price?token_id=${encodeURIComponent(tokenId)}&side=BUY`
-    ),
-    fetchJsonOrNull(
-      `${CLOB_API}/price?token_id=${encodeURIComponent(tokenId)}&side=SELL`
-    )
+  const [yesAsk, noAsk, yesMidpoint, yesSpread] = await Promise.all([
+    getBuyPrice(yesTokenId),
+    getBuyPrice(noTokenId),
+    getMidpoint(yesTokenId),
+    getSpread(yesTokenId)
   ]);
 
-  const midpoint = firstNumberFromObject(midpointRaw, [
-    "mid",
-    "midpoint",
-    "price"
-  ]);
+  const yesBid = typeof noAsk === "number" ? 1 - noAsk : null;
 
-  const spread = firstNumberFromObject(spreadRaw, ["spread", "value"]);
+  const midpointFromButtons =
+    typeof yesAsk === "number" && typeof yesBid === "number"
+      ? (yesAsk + yesBid) / 2
+      : null;
 
-  const buyPrice = firstNumberFromObject(buyRaw, ["price", "value"]);
-  const sellPrice = firstNumberFromObject(sellRaw, ["price", "value"]);
+  const gammaYesPrice = getGammaYesPrice(outcome);
+  const gammaNoPrice = getGammaNoPrice(outcome);
 
-  const gammaPrice =
-    typeof outcome.marketPrice === "number"
-      ? outcome.marketPrice
-      : typeof outcome.price === "number"
-        ? outcome.price
-        : null;
+  /**
+   * Priority:
+   * 1. CLOB midpoint endpoint
+   * 2. midpoint derived from Buy Yes / Buy No
+   * 3. Gamma YES fallback
+   */
+  const midpoint = yesMidpoint ?? midpointFromButtons ?? gammaYesPrice;
+
+  const spread =
+    yesSpread ??
+    (typeof yesAsk === "number" && typeof yesBid === "number"
+      ? yesAsk - yesBid
+      : null);
 
   return {
     outcomeName: outcome.name,
-    tokenId,
-    gammaPrice,
+
+    yesTokenId,
+    noTokenId,
+
+    gammaYesPrice,
+    gammaNoPrice,
+
+    yesAsk,
+    noAsk,
+    yesBid,
+
     midpoint,
-    spread,
-    buyPrice,
-    sellPrice
+    spread
   };
 }
 
 export async function getPolymarketClobSnapshot(
   outcomes: OutcomeRange[]
 ): Promise<PolymarketClobSnapshot> {
-  const targets = outcomes.filter((outcome) => outcome.clobTokenId || outcome.tokenId);
+  const targets = outcomes.filter(
+    (outcome) =>
+      outcome.yesTokenId ||
+      outcome.noTokenId ||
+      outcome.clobTokenId ||
+      outcome.tokenId
+  );
 
   if (targets.length === 0) {
     return {
@@ -125,7 +211,7 @@ export async function getPolymarketClobSnapshot(
   }
 
   const settled = await Promise.allSettled(
-    targets.map((outcome) => getTokenClobData(outcome))
+    targets.map((outcome) => getOutcomeClobData(outcome))
   );
 
   const prices: ClobOutcomePrice[] = [];
@@ -133,7 +219,10 @@ export async function getPolymarketClobSnapshot(
 
   settled.forEach((result, index) => {
     const tokenId =
-      targets[index].clobTokenId ?? targets[index].tokenId ?? "unknown";
+      targets[index].yesTokenId ??
+      targets[index].clobTokenId ??
+      targets[index].tokenId ??
+      "unknown";
 
     if (result.status === "fulfilled") {
       prices.push(result.value);
