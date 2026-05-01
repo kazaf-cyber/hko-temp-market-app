@@ -99,19 +99,9 @@ export type OutcomeRange = {
   lower: number | null;
   upper: number | null;
 
-  /**
-   * Polymarket implied probability / YES price, e.g. 0.22 = 22%.
-   */
   marketPrice?: number | null;
-
-  /**
-   * Alias for compatibility if some code uses `price`.
-   */
   price?: number | null;
 
-  /**
-   * CLOB token id for this outcome if available.
-   */
   tokenId?: string | null;
   clobTokenId?: string | null;
 
