@@ -302,26 +302,51 @@ function parseBinaryTemperatureMarket(market: GammaMarket): OutcomeRange | null 
     return null;
   }
 
-  const yesIndex = getYesOutcomeIndex(market);
-  const prices = parseMaybeJsonArray(market.outcomePrices).map(parsePrice);
-  const tokenIds = parseMaybeJsonArray(market.clobTokenIds).map((item) =>
-    item === null || item === undefined ? null : String(item)
-  );
+  const labels = parseMaybeJsonArray(market.outcomes).map((item) =>
+  String(item).toLowerCase()
+);
 
-  const yesPrice = prices[yesIndex] ?? null;
-  const yesTokenId = tokenIds[yesIndex] ?? null;
+const yesIndex = labels.findIndex((item) => item === "yes");
+const noIndex = labels.findIndex((item) => item === "no");
 
-  const range = outcomeRangeFromTemperatureLabel(label);
+const finalYesIndex = yesIndex >= 0 ? yesIndex : 0;
+const finalNoIndex = noIndex >= 0 ? noIndex : finalYesIndex === 0 ? 1 : 0;
 
-  return {
-    ...range,
-    marketPrice: yesPrice,
-    price: yesPrice,
-    tokenId: yesTokenId,
-    clobTokenId: yesTokenId,
-    question: market.question ?? null,
-    marketSlug: market.slug ?? null
-  };
+const prices = parseMaybeJsonArray(market.outcomePrices).map(parsePrice);
+const tokenIds = parseMaybeJsonArray(market.clobTokenIds).map((item) =>
+  item === null || item === undefined ? null : String(item)
+);
+
+const yesPrice = prices[finalYesIndex] ?? null;
+const noPrice = prices[finalNoIndex] ?? null;
+
+const yesTokenId = tokenIds[finalYesIndex] ?? null;
+const noTokenId = tokenIds[finalNoIndex] ?? null;
+
+const range = outcomeRangeFromTemperatureLabel(label);
+
+return {
+  ...range,
+
+  /**
+   * Gamma fallback. This may not match Polymarket UI midpoint exactly.
+   * CLOB midpoint will overwrite marketPrice later if includeClob=1.
+   */
+  marketPrice: yesPrice,
+  price: yesPrice,
+  marketPriceSource: "gamma_yes",
+
+  yesPrice,
+  noPrice,
+
+  tokenId: yesTokenId,
+  clobTokenId: yesTokenId,
+  yesTokenId,
+  noTokenId,
+
+  question: market.question ?? null,
+  marketSlug: market.slug ?? null
+};
 }
 
 function sortTemperatureOutcomes(outcomes: OutcomeRange[]): OutcomeRange[] {
