@@ -272,7 +272,7 @@ function getForecastHktDate(forecast: Forecast) {
   return formatHktDate(new Date());
 }
 
-function getAiExplanationText(aiCommentary: AiCommentary): string | null {
+function getAiExplanationText(aiCommentary: unknown): string | null {
   if (!aiCommentary) {
     return null;
   }
