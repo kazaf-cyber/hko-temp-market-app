@@ -12,6 +12,11 @@ type PoeErrorSummary = {
   message: string;
 };
 
+type ModelOutcomeProbability = {
+  name: string;
+  probability: number | null;
+};
+
 function getPoeErrorSummary(error: unknown): PoeErrorSummary {
   const err = error as {
     status?: number;
@@ -33,21 +38,99 @@ function getPoeErrorSummary(error: unknown): PoeErrorSummary {
   };
 }
 
-function getOutcomeMarketPrice(outcome: {
-  clobMidpoint?: unknown;
-  marketPrice?: unknown;
-  price?: unknown;
-}) {
-  if (typeof outcome.clobMidpoint === "number") {
-    return outcome.clobMidpoint;
+function getObjectField(value: unknown, key: string): unknown {
+  if (value !== null && typeof value === "object" && key in value) {
+    return (value as Record<string, unknown>)[key];
   }
 
-  if (typeof outcome.marketPrice === "number") {
-    return outcome.marketPrice;
+  return undefined;
+}
+
+function getNumberField(value: unknown, key: string): number | null {
+  const field = getObjectField(value, key);
+
+  if (typeof field === "number" && Number.isFinite(field)) {
+    return field;
   }
 
-  if (typeof outcome.price === "number") {
-    return outcome.price;
+  if (typeof field === "string") {
+    const parsed = Number(field);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function getStringField(value: unknown, key: string): string | null {
+  const field = getObjectField(value, key);
+
+  return typeof field === "string" ? field : null;
+}
+
+function normalizeOutcomeProbabilities(value: unknown): ModelOutcomeProbability[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (item === null || typeof item !== "object") {
+        return null;
+      }
+
+      const record = item as Record<string, unknown>;
+      const name = record.name;
+      const probability = record.probability;
+
+      if (typeof name !== "string") {
+        return null;
+      }
+
+      return {
+        name,
+        probability:
+          typeof probability === "number" && Number.isFinite(probability)
+            ? probability
+            : null
+      };
+    })
+    .filter((item): item is ModelOutcomeProbability => item !== null);
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function getOutcomeMarketPrice(outcome: unknown): number | null {
+  /**
+   * Priority:
+   * 1. CLOB midpoint, closest to Polymarket center displayed probability.
+   * 2. marketPrice, usually CLOB midpoint after loader, or Gamma fallback.
+   * 3. price, compatibility alias.
+   */
+  const clobMidpoint = getNumberField(outcome, "clobMidpoint");
+
+  if (clobMidpoint !== null) {
+    return clobMidpoint;
+  }
+
+  const marketPrice = getNumberField(outcome, "marketPrice");
+
+  if (marketPrice !== null) {
+    return marketPrice;
+  }
+
+  const price = getNumberField(outcome, "price");
+
+  if (price !== null) {
+    return price;
   }
 
   return null;
@@ -71,11 +154,30 @@ export async function generatePoeExplanation(params: {
       baseURL: "https://api.poe.com/v1"
     });
 
+    /**
+     * Important:
+     * Do not directly call params.forecast.outcomeProbabilities?.find(...)
+     * because in this project ForecastResult is intentionally flexible and
+     * TypeScript may treat nested fields as unknown / {}.
+     */
+    const forecastRecord = params.forecast as Record<string, unknown>;
+
+    const outcomeProbabilities = normalizeOutcomeProbabilities(
+      getObjectField(forecastRecord, "outcomeProbabilities")
+    );
+
+    const keyDrivers = normalizeStringArray(
+      getObjectField(forecastRecord, "keyDrivers")
+    );
+
+    const warnings = normalizeStringArray(
+      getObjectField(forecastRecord, "warnings")
+    );
+
     const marketVsModel = params.state.outcomes.map((outcome) => {
       const modelProbability =
-        params.forecast.outcomeProbabilities?.find(
-          (item) => item.name === outcome.name
-        )?.probability ?? null;
+        outcomeProbabilities.find((item) => item.name === outcome.name)
+          ?.probability ?? null;
 
       const polymarketProbability = getOutcomeMarketPrice(outcome);
 
@@ -107,27 +209,16 @@ export async function generatePoeExplanation(params: {
          */
         edge,
 
-        marketPriceSource:
-          typeof outcome.marketPriceSource === "string"
-            ? outcome.marketPriceSource
-            : null,
+        marketPriceSource: getStringField(outcome, "marketPriceSource"),
 
-        clobMidpoint:
-          typeof outcome.clobMidpoint === "number"
-            ? outcome.clobMidpoint
-            : null,
+        clobMidpoint: getNumberField(outcome, "clobMidpoint"),
+        yesAsk: getNumberField(outcome, "yesAsk"),
+        noAsk: getNumberField(outcome, "noAsk"),
+        yesBid: getNumberField(outcome, "yesBid"),
+        clobSpread: getNumberField(outcome, "clobSpread"),
 
-        yesAsk:
-          typeof outcome.yesAsk === "number" ? outcome.yesAsk : null,
-
-        noAsk:
-          typeof outcome.noAsk === "number" ? outcome.noAsk : null,
-
-        yesBid:
-          typeof outcome.yesBid === "number" ? outcome.yesBid : null,
-
-        clobSpread:
-          typeof outcome.clobSpread === "number" ? outcome.clobSpread : null
+        yesPrice: getNumberField(outcome, "yesPrice"),
+        noPrice: getNumberField(outcome, "noPrice")
       };
     });
 
@@ -149,18 +240,21 @@ export async function generatePoeExplanation(params: {
 
       /**
        * Very important:
-       * This table separates market prices from model probabilities.
+       * This table separates Polymarket market prices from app model probabilities.
        */
       marketVsModel,
 
       modelForecast: {
-        hktDate: params.forecast.hktDate,
-        maxSoFarC: params.forecast.maxSoFarC,
-        maxSoFarSource: params.forecast.maxSoFarSource,
-        estimatedFinalMaxC: params.forecast.estimatedFinalMaxC,
-        outcomeProbabilities: params.forecast.outcomeProbabilities,
-        keyDrivers: params.forecast.keyDrivers,
-        warnings: params.forecast.warnings
+        hktDate: getObjectField(forecastRecord, "hktDate"),
+        maxSoFarC: getObjectField(forecastRecord, "maxSoFarC"),
+        maxSoFarSource: getObjectField(forecastRecord, "maxSoFarSource"),
+        estimatedFinalMaxC: getObjectField(
+          forecastRecord,
+          "estimatedFinalMaxC"
+        ),
+        outcomeProbabilities,
+        keyDrivers,
+        warnings
       }
     };
 
@@ -219,6 +313,7 @@ export async function generatePoeExplanation(params: {
 - 如果 maxSoFarSource 是 current_temperature_fallback，要明確提示風險，因為它不是 HKO since-midnight max 官方 feed。
 - 如果 HKO since-midnight max 缺失，要提醒低溫 bucket 可能被高估。
 - 如果某 outcome 已接近或穿過整數 boundary，例如 25.9°C / 26.0°C，要提醒 boundary risk。
+- 如果 Polymarket 盤口和模型概率差異極大，要提醒先檢查資料來源、HKO max-so-far、CLOB midpoint、Gamma fallback、以及 settlement source。
 
 資料 JSON：
 ${JSON.stringify(payload, null, 2)}`
