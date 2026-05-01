@@ -353,9 +353,22 @@ function buildForecastPayload(params: {
 async function runForecast(options: RunForecastOptions) {
   const forecast = await getForecast(options);
 
-  const aiCommentary = options.ai
-    ? await getPoeForecastCommentary(forecast)
-    : null;
+  let aiCommentary: AiCommentary = null;
+
+  if (options.ai) {
+    try {
+      aiCommentary = await getPoeForecastCommentary(forecast);
+    } catch (error) {
+      console.error("Poe AI commentary error:", error);
+
+      aiCommentary = {
+        explanation:
+          error instanceof Error
+            ? `Poe AI explanation failed: ${error.message}`
+            : "Poe AI explanation failed."
+      } as Awaited<ReturnType<typeof getPoeForecastCommentary>>;
+    }
+  }
 
   const historySave = await saveHistoryIfRequested({
     saveHistory: Boolean(options.saveHistory),
@@ -370,7 +383,6 @@ async function runForecast(options: RunForecastOptions) {
     historySave
   });
 }
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
