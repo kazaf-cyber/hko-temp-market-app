@@ -1,8 +1,11 @@
-import { getMultiChannelSnapshot, type MultiChannelSnapshot } from "@/lib/multichannel";
+import {
+  getMultiChannelSnapshot,
+  type MultiChannelSnapshot
+} from "@/lib/multichannel";
 import { getMarketState } from "@/lib/state";
 import type { OutcomeRange } from "@/types";
 
-export const FORECAST_ENGINE_VERSION = "multi-channel-v2.0.0";
+export const FORECAST_ENGINE_VERSION = "multi-channel-v2.1.0";
 
 type SourceError = {
   source: string;
@@ -22,7 +25,8 @@ type MarketStateLike = {
   [key: string]: unknown;
 };
 
-type ClobRow = NonNullable<MultiChannelSnapshot["polymarketClob"]>["outcomes"][number];
+type ClobRow =
+  NonNullable<MultiChannelSnapshot["polymarketClob"]>["outcomes"][number];
 
 export type ForecastWeatherInputs = {
   forecastTargetDate: string;
@@ -30,8 +34,47 @@ export type ForecastWeatherInputs = {
   timeBand: "overnight" | "morning" | "midday" | "afternoon" | "evening";
   remainingSettlementHours: number;
 
+  /*
+    HKO observed temperature signals.
+  */
   hkoCurrentTempC: number | null;
+  currentTempC: number | null;
+  currentTemperatureC: number | null;
+
   observedMaxC: number | null;
+  observedMaxSoFarC: number | null;
+  observedMaxLowerBoundC: number | null;
+  observedFinalMaxLowerBoundC: number | null;
+
+  hkoMaxSoFarC: number | null;
+  hkoMaxSinceMidnightC: number | null;
+  maxSinceMidnightC: number | null;
+  maxSoFarC: number | null;
+
+  hkoMinSinceMidnightC: number | null;
+  minSinceMidnightC: number | null;
+  observedMinC: number | null;
+  observedMinSoFarC: number | null;
+  minSoFarC: number | null;
+
+  /*
+    HKO official forecast max.
+    This is forecast, not observation. It must not be used as an observed lower bound.
+  */
+  officialForecastMaxC: number | null;
+  hkoOfficialForecastMaxC: number | null;
+  forecastMaxC: number | null;
+  hkoForecastMaxC: number | null;
+
+  /*
+    HKO rainfall aliases.
+  */
+  observedHourlyRainfallMm: number | null;
+  hourlyRainfallMm: number | null;
+  rainfallLastHourMm: number | null;
+  rainfallPastHourMm: number | null;
+  rainHourlyMm: number | null;
+  rainfallMm: number | null;
 
   openMeteoCurrentTempC: number | null;
   openMeteoRemainingDayMaxC: number | null;
@@ -46,7 +89,6 @@ export type ForecastWeatherInputs = {
 
   rainProbabilityNext2hPct: number | null;
   cloudCoverNowPct: number | null;
-  observedHourlyRainfallMm: number | null;
 
   modelDisagreementC: number | null;
   sourceCount: number;
@@ -60,29 +102,77 @@ export type ForecastOutcome = OutcomeRange & {
   lower: number | null;
   upper: number | null;
 
+  /*
+    Legacy / final probability aliases.
+  */
   probability: number;
   probabilityPct: number;
 
+  modelProbability: number;
+  modelProbabilityPct: number;
+
+  forecastProbability: number;
+  forecastProbabilityPct: number;
+
+  finalProbability: number;
+  finalProbabilityPct: number;
+
+  blendedProbability: number;
+  blendedProbabilityPct: number;
+
+  /*
+    Weather fair probability.
+  */
   weatherProbability: number;
   weatherProbabilityPct: number;
+  weatherFairProbability: number;
+  weatherFairProbabilityPct: number;
 
+  /*
+    Market probability.
+  */
   marketProbability: number | null;
   marketProbabilityPct: number | null;
+  polymarketProbability: number | null;
+  polymarketProbabilityPct: number | null;
 
   marketRawPrice: number | null;
+
   clobMidpoint: number | null;
   clobSpread: number | null;
   clobBuyPrice: number | null;
   clobSellPrice: number | null;
+
+  clobBestBid: number | null;
+  clobBestAsk: number | null;
+  bestBid: number | null;
+  bestAsk: number | null;
+
   gammaPrice: number | null;
+  gammaProbability: number | null;
+  gammaProbabilityPct: number | null;
+
+  edge: number | null;
+  edgePct: number | null;
+  fairEdge: number | null;
+  fairEdgePct: number | null;
+  finalEdge: number | null;
+  finalEdgePct: number | null;
 
   isImpossibleByObservedMax: boolean;
+  impossibleByObservedMax: boolean;
+  observedMaxLowerBoundC: number | null;
+
   explanationFactors: string[];
 };
 
 export type ForecastResult = {
   version: typeof FORECAST_ENGINE_VERSION;
   generatedAt: string;
+
+  hktDate: string;
+  forecastDate: string;
+  date: string;
 
   market: {
     loaded: boolean;
@@ -97,6 +187,41 @@ export type ForecastResult = {
     error: string | null;
   };
 
+  /*
+    Top-level weather aliases for old UI / route fallback.
+  */
+  hkoCurrentTempC: number | null;
+  currentTempC: number | null;
+  currentTemperatureC: number | null;
+
+  observedMaxC: number | null;
+  observedMaxSoFarC: number | null;
+  observedMaxLowerBoundC: number | null;
+  observedFinalMaxLowerBoundC: number | null;
+
+  hkoMaxSoFarC: number | null;
+  hkoMaxSinceMidnightC: number | null;
+  maxSinceMidnightC: number | null;
+  maxSoFarC: number | null;
+
+  hkoMinSinceMidnightC: number | null;
+  minSinceMidnightC: number | null;
+  observedMinC: number | null;
+  observedMinSoFarC: number | null;
+  minSoFarC: number | null;
+
+  officialForecastMaxC: number | null;
+  hkoOfficialForecastMaxC: number | null;
+  forecastMaxC: number | null;
+  hkoForecastMaxC: number | null;
+
+  observedHourlyRainfallMm: number | null;
+  hourlyRainfallMm: number | null;
+  rainfallLastHourMm: number | null;
+  rainfallPastHourMm: number | null;
+  rainHourlyMm: number | null;
+  rainfallMm: number | null;
+
   weather: ForecastWeatherInputs;
 
   model: {
@@ -110,8 +235,16 @@ export type ForecastResult = {
     confidenceLabel: "low" | "medium" | "high";
   };
 
+  confidence: number;
+  confidenceLabel: "low" | "medium" | "high";
+
   outcomes: ForecastOutcome[];
+  probabilities: ForecastOutcome[];
+  outcomeProbabilities: ForecastOutcome[];
   topOutcome: ForecastOutcome | null;
+
+  keyDrivers: string[];
+  warnings: string[];
 
   summary: string;
 
@@ -126,6 +259,16 @@ export type ForecastResult = {
     marketStateError: string | null;
     noEligibleOutcomes: boolean;
     assumptions: string[];
+
+    hkoCurrentTempC: number | null;
+    hkoMaxSinceMidnightC: number | null;
+    hkoMinSinceMidnightC: number | null;
+    officialForecastMaxC: number | null;
+    hourlyRainfallMm: number | null;
+    observedMaxLowerBoundC: number | null;
+
+    keyDrivers: string[];
+    warnings: string[];
   };
 
   multiChannel?: MultiChannelSnapshot;
@@ -155,6 +298,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function getAt(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+
+  for (const key of path) {
+    if (Array.isArray(current)) {
+      const index = Number(key);
+
+      if (!Number.isInteger(index)) {
+        return undefined;
+      }
+
+      current = current[index];
+      continue;
+    }
+
+    if (!isRecord(current)) {
+      return undefined;
+    }
+
+    current = current[key];
+  }
+
+  return current;
+}
+
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -164,7 +336,9 @@ function asNumber(value: unknown): number | null {
     const trimmed = value.trim();
     if (!trimmed) return null;
 
-    const parsed = Number(trimmed);
+    const cleaned = trimmed.replace(/,/g, "").replace(/%$/g, "");
+    const parsed = Number(cleaned);
+
     return Number.isFinite(parsed) ? parsed : null;
   }
 
@@ -182,7 +356,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function roundNumber(value: number | null | undefined, digits = 2): number | null {
+function roundNumber(
+  value: number | null | undefined,
+  digits = 2
+): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
 
   const factor = 10 ** digits;
@@ -192,9 +369,23 @@ function roundNumber(value: number | null | undefined, digits = 2): number | nul
 function maxNumber(values: unknown[]): number | null {
   const nums = values
     .map(asNumber)
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    .filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value)
+    );
 
   return nums.length > 0 ? Math.max(...nums) : null;
+}
+
+function minNumber(values: unknown[]): number | null {
+  const nums = values
+    .map(asNumber)
+    .filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value)
+    );
+
+  return nums.length > 0 ? Math.min(...nums) : null;
 }
 
 function firstNumber(values: unknown[]): number | null {
@@ -204,6 +395,10 @@ function firstNumber(values: unknown[]): number | null {
   }
 
   return null;
+}
+
+function firstNumberAtPaths(value: unknown, paths: string[][]): number | null {
+  return firstNumber(paths.map((path) => getAt(value, path)));
 }
 
 function weightedAverage(
@@ -308,6 +503,7 @@ function getOutcomeGammaPrice(outcome: OutcomeRange) {
     "marketPrice",
     "price",
     "gammaPrice",
+    "gammaYesPrice",
     "lastPrice"
   ]);
 }
@@ -326,7 +522,8 @@ function getClobBuyPrice(clob: ClobRow | null) {
     "buyPrice",
     "bid",
     "bestBid",
-    "bestBidPrice"
+    "bestBidPrice",
+    "yesBid"
   ]);
 }
 
@@ -335,7 +532,8 @@ function getClobSellPrice(clob: ClobRow | null) {
     "sellPrice",
     "ask",
     "bestAsk",
-    "bestAskPrice"
+    "bestAskPrice",
+    "yesAsk"
   ]);
 }
 
@@ -361,10 +559,318 @@ function getClobSpread(clob: ClobRow | null) {
 
 function getClobGammaPrice(clob: ClobRow | null) {
   return getFirstNormalizedPriceField(clob, [
+    "gammaYesPrice",
     "gammaPrice",
     "marketPrice",
     "price",
     "lastPrice"
+  ]);
+}
+
+function normalizeStationName(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]/g, "");
+}
+
+function isHkoStationName(value: unknown): boolean {
+  const normalized = normalizeStationName(value);
+
+  return [
+    "hko",
+    "hkobservatory",
+    "hongkongobservatory",
+    "香港天文台"
+  ].includes(normalized);
+}
+
+function getHkoTemperatureFromObservationArray(value: unknown): number | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const records = value.filter(isRecord);
+
+  const hkoRecord =
+    records.find((item) =>
+      isHkoStationName(
+        asString(item.place) ??
+          asString(item.station) ??
+          asString(item.name) ??
+          asString(item.automaticWeatherStation) ??
+          asString(item.automatic_weather_station)
+      )
+    ) ?? null;
+
+  if (!hkoRecord) {
+    return null;
+  }
+
+  return firstNumber([
+    hkoRecord.value,
+    hkoRecord.temp,
+    hkoRecord.temperature,
+    hkoRecord.temperatureC,
+    hkoRecord.airTemperature,
+    hkoRecord.airTemperatureC
+  ]);
+}
+
+function getRainfallMmFromObservationArray(value: unknown): number | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const records = value.filter(isRecord);
+
+  if (!records.length) {
+    return null;
+  }
+
+  const hkoRecord =
+    records.find((item) =>
+      isHkoStationName(
+        asString(item.place) ??
+          asString(item.station) ??
+          asString(item.name) ??
+          asString(item.automaticWeatherStation) ??
+          asString(item.automatic_weather_station)
+      )
+    ) ?? null;
+
+  if (hkoRecord) {
+    const hkoRainfall = firstNumber([
+      hkoRecord.value,
+      hkoRecord.amount,
+      hkoRecord.rainfall,
+      hkoRecord.rainfallMm,
+      hkoRecord.hourlyRainfallMm,
+      hkoRecord.max,
+      hkoRecord.min
+    ]);
+
+    if (hkoRainfall !== null) {
+      return hkoRainfall;
+    }
+  }
+
+  const values = records
+    .map((item) =>
+      firstNumber([
+        item.max,
+        item.value,
+        item.amount,
+        item.rainfall,
+        item.rainfallMm,
+        item.hourlyRainfallMm,
+        item.min
+      ])
+    )
+    .filter((item): item is number => item !== null);
+
+  if (!values.length) {
+    return null;
+  }
+
+  /*
+    HKO rainfall array is often district-based. For a compact dashboard card,
+    the most useful fallback is the highest observed hourly rainfall.
+  */
+  return Math.max(...values);
+}
+
+function getHkoCurrentTempC(snapshot: MultiChannelSnapshot): number | null {
+  return firstNumber([
+    getAt(snapshot, ["derived", "hkoCurrentTempC"]),
+
+    getAt(snapshot, ["hko", "current", "hkoCurrentTempC"]),
+    getAt(snapshot, ["hko", "current", "currentTempC"]),
+    getAt(snapshot, ["hko", "current", "currentTemperatureC"]),
+    getAt(snapshot, ["hko", "current", "tempC"]),
+    getAt(snapshot, ["hko", "current", "temperatureC"]),
+    getAt(snapshot, ["hko", "current", "temperature"]),
+    getAt(snapshot, ["hko", "current", "temperature", "value"]),
+    getAt(snapshot, ["hko", "current", "airTemperatureC"]),
+    getAt(snapshot, ["hko", "current", "airTemperature"]),
+
+    getAt(snapshot, ["hko", "hkoCurrentTempC"]),
+    getAt(snapshot, ["hko", "currentTempC"]),
+    getAt(snapshot, ["hko", "currentTemperatureC"]),
+    getAt(snapshot, ["hko", "temperatureC"]),
+    getAt(snapshot, ["hko", "temperature"]),
+    getAt(snapshot, ["hko", "temperature", "value"]),
+
+    getHkoTemperatureFromObservationArray(
+      getAt(snapshot, ["hko", "temperature", "data"])
+    ),
+    getHkoTemperatureFromObservationArray(
+      getAt(snapshot, ["hko", "current", "temperature", "data"])
+    ),
+    getHkoTemperatureFromObservationArray(
+      getAt(snapshot, ["hko", "raw", "temperature", "data"])
+    )
+  ]);
+}
+
+function getHkoMaxSinceMidnightC(
+  snapshot: MultiChannelSnapshot,
+  hkoCurrentTempC: number | null
+): number | null {
+  /*
+    multichannel.ts currently sets derived.hkoMaxSoFarC to:
+      hko.sinceMidnight?.maxTempC ?? hkoCurrentTempC
+
+    We still check raw paths first / alongside it to make this robust.
+  */
+  return maxNumber([
+    getAt(snapshot, ["derived", "hkoMaxSoFarC"]),
+    getAt(snapshot, ["derived", "hkoMaxSinceMidnightC"]),
+    getAt(snapshot, ["derived", "maxSinceMidnightC"]),
+    getAt(snapshot, ["derived", "observedMaxC"]),
+    getAt(snapshot, ["derived", "observedMaxSoFarC"]),
+
+    getAt(snapshot, ["hko", "sinceMidnight", "maxTempC"]),
+    getAt(snapshot, ["hko", "sinceMidnight", "maxTemperatureC"]),
+    getAt(snapshot, ["hko", "sinceMidnight", "maxTemp"]),
+    getAt(snapshot, ["hko", "sinceMidnight", "maxTemperature"]),
+
+    getAt(snapshot, ["hko", "hkoMaxSinceMidnightC"]),
+    getAt(snapshot, ["hko", "maxSinceMidnightC"]),
+    getAt(snapshot, ["hko", "hkoMaxSoFarC"]),
+    getAt(snapshot, ["hko", "maxSoFarC"]),
+    getAt(snapshot, ["hko", "observedMaxC"]),
+    getAt(snapshot, ["hko", "observedMaxSoFarC"]),
+
+    getAt(snapshot, ["hko", "current", "maxSoFarC"]),
+    getAt(snapshot, ["hko", "current", "todayMax"]),
+    getAt(snapshot, ["hko", "current", "maxTemperature"]),
+    getAt(snapshot, ["hko", "current", "maxTemperatureC"]),
+
+    hkoCurrentTempC
+  ]);
+}
+
+function getHkoMinSinceMidnightC(
+  snapshot: MultiChannelSnapshot
+): number | null {
+  return minNumber([
+    getAt(snapshot, ["derived", "hkoMinSinceMidnightC"]),
+    getAt(snapshot, ["derived", "minSinceMidnightC"]),
+    getAt(snapshot, ["derived", "observedMinC"]),
+    getAt(snapshot, ["derived", "observedMinSoFarC"]),
+
+    getAt(snapshot, ["hko", "sinceMidnight", "minTempC"]),
+    getAt(snapshot, ["hko", "sinceMidnight", "minTemperatureC"]),
+    getAt(snapshot, ["hko", "sinceMidnight", "minTemp"]),
+    getAt(snapshot, ["hko", "sinceMidnight", "minTemperature"]),
+
+    getAt(snapshot, ["hko", "hkoMinSinceMidnightC"]),
+    getAt(snapshot, ["hko", "minSinceMidnightC"]),
+    getAt(snapshot, ["hko", "observedMinC"]),
+    getAt(snapshot, ["hko", "observedMinSoFarC"]),
+    getAt(snapshot, ["hko", "minSoFarC"]),
+    getAt(snapshot, ["hko", "todayMinC"]),
+    getAt(snapshot, ["hko", "todayMin"]),
+
+    getAt(snapshot, ["hko", "current", "minSoFarC"]),
+    getAt(snapshot, ["hko", "current", "todayMin"]),
+    getAt(snapshot, ["hko", "current", "minTemperature"]),
+    getAt(snapshot, ["hko", "current", "minTemperatureC"])
+  ]);
+}
+
+function getOfficialForecastMaxC(
+  snapshot: MultiChannelSnapshot
+): number | null {
+  return firstNumberAtPaths(snapshot, [
+    ["derived", "officialForecastMaxC"],
+    ["derived", "hkoOfficialForecastMaxC"],
+    ["derived", "forecastMaxC"],
+    ["derived", "hkoForecastMaxC"],
+
+    ["hko", "officialForecastMaxC"],
+    ["hko", "hkoOfficialForecastMaxC"],
+    ["hko", "forecastMaxC"],
+    ["hko", "hkoForecastMaxC"],
+    ["hko", "officialForecastMax"],
+    ["hko", "forecastMax"],
+
+    ["hko", "forecastMaxtemp", "value"],
+    ["hko", "forecastMaxtemp"],
+    ["hko", "forecastMaxTemp", "value"],
+    ["hko", "forecastMaxTemperature", "value"],
+
+    ["hko", "forecast", "maxTempC"],
+    ["hko", "forecast", "maxTemperatureC"],
+    ["hko", "forecast", "forecastMaxtemp", "value"],
+
+    ["hko", "localForecast", "forecastMaxC"],
+    ["hko", "localForecast", "forecastMaxtemp", "value"],
+    ["hko", "localForecast", "forecastMaxTemp", "value"],
+    ["hko", "localForecast", "forecastMaxTemperature", "value"],
+
+    ["hko", "nineDayWeatherForecast", "0", "forecastMaxtemp", "value"],
+    ["hko", "nineDayWeatherForecast", "0", "forecastMaxTemp", "value"],
+    ["hko", "nineDayWeatherForecast", "0", "forecastMaxTemperature", "value"],
+
+    ["hko", "weatherForecast", "0", "forecastMaxtemp", "value"],
+    ["hko", "weatherForecast", "0", "forecastMaxTemp", "value"],
+    ["hko", "weatherForecast", "0", "forecastMaxTemperature", "value"],
+
+    ["hko", "raw", "nineDayWeatherForecast", "0", "forecastMaxtemp", "value"],
+    ["hko", "raw", "nineDayWeatherForecast", "0", "forecastMaxTemp", "value"],
+    [
+      "hko",
+      "raw",
+      "nineDayWeatherForecast",
+      "0",
+      "forecastMaxTemperature",
+      "value"
+    ],
+
+    ["hko", "raw", "weatherForecast", "0", "forecastMaxtemp", "value"],
+    ["hko", "raw", "weatherForecast", "0", "forecastMaxTemp", "value"],
+    ["hko", "raw", "weatherForecast", "0", "forecastMaxTemperature", "value"]
+  ]);
+}
+
+function getHourlyRainfallMm(snapshot: MultiChannelSnapshot): number | null {
+  return firstNumber([
+    getAt(snapshot, ["derived", "hourlyRainfallMm"]),
+    getAt(snapshot, ["derived", "rainfallLastHourMm"]),
+    getAt(snapshot, ["derived", "rainfallPastHourMm"]),
+    getAt(snapshot, ["derived", "rainHourlyMm"]),
+    getAt(snapshot, ["derived", "rainfallMm"]),
+    getAt(snapshot, ["derived", "observedHourlyRainfallMm"]),
+
+    getAt(snapshot, ["hko", "hourlyRainfallMm"]),
+    getAt(snapshot, ["hko", "rainfallLastHourMm"]),
+    getAt(snapshot, ["hko", "rainfallPastHourMm"]),
+    getAt(snapshot, ["hko", "rainHourlyMm"]),
+    getAt(snapshot, ["hko", "rainfallMm"]),
+    getAt(snapshot, ["hko", "rainfall"]),
+
+    getAt(snapshot, ["hko", "hourlyRainfall", "rainfallMm"]),
+    getAt(snapshot, ["hko", "hourlyRainfall", "value"]),
+    getAt(snapshot, ["hko", "hourlyRainfall", "amount"]),
+
+    getAt(snapshot, ["hko", "rain", "hourlyRainfallMm"]),
+    getAt(snapshot, ["hko", "rain", "rainfallLastHourMm"]),
+    getAt(snapshot, ["hko", "rain", "rainfallMm"]),
+
+    getAt(snapshot, ["hko", "current", "hourlyRainfallMm"]),
+    getAt(snapshot, ["hko", "current", "rainfallLastHourMm"]),
+
+    getRainfallMmFromObservationArray(
+      getAt(snapshot, ["hko", "rainfall", "data"])
+    ),
+    getRainfallMmFromObservationArray(
+      getAt(snapshot, ["hko", "current", "rainfall", "data"])
+    ),
+    getRainfallMmFromObservationArray(
+      getAt(snapshot, ["hko", "raw", "rainfall", "data"])
+    )
   ]);
 }
 
@@ -423,7 +929,8 @@ function getHongKongDateParts(date: Date) {
     hour12: false
   }).formatToParts(date);
 
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
 
   const hourRaw = Number(get("hour"));
   const hour = hourRaw === 24 ? 0 : hourRaw;
@@ -469,7 +976,10 @@ function getTimeBand(hour: number): ForecastWeatherInputs["timeBand"] {
   return "evening";
 }
 
-function getOpenMeteoRemainingDayMaxC(snapshot: MultiChannelSnapshot, now: Date): number | null {
+function getOpenMeteoRemainingDayMaxC(
+  snapshot: MultiChannelSnapshot,
+  now: Date
+): number | null {
   const openMeteo = snapshot.openMeteo;
   if (!openMeteo) return null;
 
@@ -482,7 +992,7 @@ function getOpenMeteoRemainingDayMaxC(snapshot: MultiChannelSnapshot, now: Date)
   */
   const lowerBoundMs = Math.max(bounds.startMs, nowMs - 60 * 60 * 1000);
 
-  const values = openMeteo.hourly
+  const values: unknown[] = openMeteo.hourly
     .filter((point) => {
       const timestamp = parseOpenMeteoTimeMs(point.time);
       if (timestamp === null) return false;
@@ -496,7 +1006,10 @@ function getOpenMeteoRemainingDayMaxC(snapshot: MultiChannelSnapshot, now: Date)
   return maxNumber(values);
 }
 
-function getWindyRemainingDayMaxC(snapshot: MultiChannelSnapshot, now: Date): number | null {
+function getWindyRemainingDayMaxC(
+  snapshot: MultiChannelSnapshot,
+  now: Date
+): number | null {
   const windy = snapshot.windy;
   if (!windy || !windy.enabled) return null;
 
@@ -504,8 +1017,11 @@ function getWindyRemainingDayMaxC(snapshot: MultiChannelSnapshot, now: Date): nu
   const nowMs = now.getTime();
   const lowerBoundMs = Math.max(bounds.startMs, nowMs - 90 * 60 * 1000);
 
-  const values = windy.hourly
-    .filter((point) => point.timestamp >= lowerBoundMs && point.timestamp <= bounds.endMs)
+  const values: unknown[] = windy.hourly
+    .filter(
+      (point) =>
+        point.timestamp >= lowerBoundMs && point.timestamp <= bounds.endMs
+    )
     .map((point) => point.tempC);
 
   return maxNumber(values);
@@ -526,13 +1042,19 @@ function estimateCoolingAdjustment(params: {
   if (rainProbability !== null) {
     if (rainProbability >= 80) {
       cooling += 0.35;
-      reasons.push("Very high near-term rain probability suppresses upside temperature risk.");
+      reasons.push(
+        "Very high near-term rain probability suppresses upside temperature risk."
+      );
     } else if (rainProbability >= 60) {
       cooling += 0.25;
-      reasons.push("High near-term rain probability slightly lowers expected remaining-day maximum.");
+      reasons.push(
+        "High near-term rain probability slightly lowers expected remaining-day maximum."
+      );
     } else if (rainProbability >= 40) {
       cooling += 0.1;
-      reasons.push("Moderate near-term rain probability adds mild cooling pressure.");
+      reasons.push(
+        "Moderate near-term rain probability adds mild cooling pressure."
+      );
     }
   }
 
@@ -549,7 +1071,9 @@ function estimateCoolingAdjustment(params: {
   if (rainfall !== null) {
     if (rainfall >= 10) {
       cooling += 0.25;
-      reasons.push("Recent heavy observed rainfall supports a cooler near-term profile.");
+      reasons.push(
+        "Recent heavy observed rainfall supports a cooler near-term profile."
+      );
     } else if (rainfall >= 2) {
       cooling += 0.1;
       reasons.push("Recent observed rainfall adds minor cooling pressure.");
@@ -568,6 +1092,7 @@ function estimateStdDevC(params: {
   observedMaxC: number | null;
   openMeteoRemainingDayMaxC: number | null;
   windyRemainingDayMaxC: number | null;
+  officialForecastMaxC: number | null;
   modelDisagreementC: number | null;
   rainProbabilityNext2hPct: number | null;
 }) {
@@ -589,7 +1114,11 @@ function estimateStdDevC(params: {
     stdDev = Math.min(stdDev, 0.32);
   }
 
-  if (params.openMeteoRemainingDayMaxC === null && params.windyRemainingDayMaxC === null) {
+  if (
+    params.openMeteoRemainingDayMaxC === null &&
+    params.windyRemainingDayMaxC === null &&
+    params.officialForecastMaxC === null
+  ) {
     stdDev += 0.25;
   }
 
@@ -607,6 +1136,9 @@ function estimateStdDevC(params: {
 function estimateConfidence(params: {
   observedMaxC: number | null;
   hkoCurrentTempC: number | null;
+  hkoMinSinceMidnightC: number | null;
+  officialForecastMaxC: number | null;
+  hourlyRainfallMm: number | null;
   openMeteoRemainingDayMaxC: number | null;
   windyRemainingDayMaxC: number | null;
   modelDisagreementC: number | null;
@@ -617,6 +1149,10 @@ function estimateConfidence(params: {
 
   if (params.observedMaxC !== null) score += 0.18;
   if (params.hkoCurrentTempC !== null) score += 0.08;
+  if (params.hkoMinSinceMidnightC !== null) score += 0.03;
+  if (params.officialForecastMaxC !== null) score += 0.05;
+  if (params.hourlyRainfallMm !== null) score += 0.02;
+
   if (params.openMeteoRemainingDayMaxC !== null) score += 0.14;
   if (params.windyRemainingDayMaxC !== null) score += 0.1;
 
@@ -633,7 +1169,11 @@ function estimateConfidence(params: {
   const confidenceScore = clamp(score, 0.2, 0.9);
 
   const confidenceLabel: ForecastResult["model"]["confidenceLabel"] =
-    confidenceScore >= 0.72 ? "high" : confidenceScore >= 0.5 ? "medium" : "low";
+    confidenceScore >= 0.72
+      ? "high"
+      : confidenceScore >= 0.5
+        ? "medium"
+        : "low";
 
   return {
     confidenceScore,
@@ -641,49 +1181,113 @@ function estimateConfidence(params: {
   };
 }
 
-function computeWeatherInputs(snapshot: MultiChannelSnapshot, now: Date): ForecastWeatherInputs {
+function computeWeatherInputs(
+  snapshot: MultiChannelSnapshot,
+  now: Date
+): ForecastWeatherInputs {
   const bounds = getHongKongDayBounds(now);
   const hongKongHour = bounds.hour;
-  const remainingSettlementHours = Math.max(0, (bounds.endMs - now.getTime()) / (60 * 60 * 1000));
+  const remainingSettlementHours = Math.max(
+    0,
+    (bounds.endMs - now.getTime()) / (60 * 60 * 1000)
+  );
 
-  const hkoCurrentTempC = asNumber(snapshot.derived.hkoCurrentTempC);
-  const observedMaxC = asNumber(snapshot.derived.hkoMaxSoFarC);
+  const hkoCurrentTempC = getHkoCurrentTempC(snapshot);
+  const hkoMaxSinceMidnightC = getHkoMaxSinceMidnightC(
+    snapshot,
+    hkoCurrentTempC
+  );
 
-  const openMeteoCurrentTempC = asNumber(snapshot.derived.openMeteoCurrentTempC);
-  const openMeteoRemainingDayMaxC = getOpenMeteoRemainingDayMaxC(snapshot, now);
-  const windyRemainingDayMaxC = getWindyRemainingDayMaxC(snapshot, now);
+  /*
+    Critical observed lower-bound rule:
 
-  const rainProbabilityNext2hPct = asNumber(snapshot.derived.rainProbabilityNext2hPct);
-  const cloudCoverNowPct = asNumber(snapshot.derived.cloudCoverNowPct);
-  const observedHourlyRainfallMm = asNumber(snapshot.derived.observedHourlyRainfallMm);
+      final daily max >= max(
+        HKO max since midnight,
+        HKO current temperature
+      )
+
+    Official forecast max is deliberately NOT included here.
+  */
+  const observedMaxC = maxNumber([hkoMaxSinceMidnightC, hkoCurrentTempC]);
+
+  const hkoMinSinceMidnightC = getHkoMinSinceMidnightC(snapshot);
+  const officialForecastMaxC = getOfficialForecastMaxC(snapshot);
+  const hourlyRainfallMm = getHourlyRainfallMm(snapshot);
+
+  const openMeteoCurrentTempC = firstNumber([
+    getAt(snapshot, ["derived", "openMeteoCurrentTempC"]),
+    snapshot.openMeteo?.current?.temperature2mC
+  ]);
+
+  const openMeteoRemainingDayMaxC = firstNumber([
+    getOpenMeteoRemainingDayMaxC(snapshot, now),
+    getAt(snapshot, ["derived", "openMeteoRemainingDayMaxC"]),
+    getAt(snapshot, ["derived", "openMeteoFutureMaxC"])
+  ]);
+
+  const windyRemainingDayMaxC = firstNumber([
+    getWindyRemainingDayMaxC(snapshot, now),
+    getAt(snapshot, ["derived", "windyRemainingDayMaxC"]),
+    getAt(snapshot, ["derived", "windyFutureMaxC"])
+  ]);
+
+  const rainProbabilityNext2hPct = firstNumber([
+    getAt(snapshot, ["derived", "rainProbabilityNext2hPct"])
+  ]);
+
+  const cloudCoverNowPct = firstNumber([
+    getAt(snapshot, ["derived", "cloudCoverNowPct"]),
+    snapshot.openMeteo?.current?.cloudCoverPct
+  ]);
 
   const modelDisagreementC =
     openMeteoRemainingDayMaxC !== null && windyRemainingDayMaxC !== null
       ? Math.abs(openMeteoRemainingDayMaxC - windyRemainingDayMaxC)
       : null;
 
+  /*
+    HKO official forecast max is a useful forecast channel, but it is not an
+    observation. It gets a modest weight as a prior, while observedMaxC remains
+    the hard lower bound.
+  */
   const modelFutureMeanC = weightedAverage([
     {
       value: openMeteoRemainingDayMaxC,
-      weight: 0.58
+      weight: 0.48
     },
     {
       value: windyRemainingDayMaxC,
-      weight: 0.42
+      weight: 0.32
+    },
+    {
+      value: officialForecastMaxC,
+      weight: 0.2
     }
   ]);
 
   const cooling = estimateCoolingAdjustment({
     rainProbabilityNext2hPct,
     cloudCoverNowPct,
-    observedHourlyRainfallMm
+    observedHourlyRainfallMm: hourlyRainfallMm
   });
 
   let adjustedFutureMeanC =
     modelFutureMeanC ??
-    firstNumber([hkoCurrentTempC, openMeteoCurrentTempC, observedMaxC]);
+    firstNumber([
+      officialForecastMaxC,
+      hkoCurrentTempC,
+      openMeteoCurrentTempC,
+      observedMaxC
+    ]);
 
-  if (adjustedFutureMeanC !== null && modelFutureMeanC !== null) {
+  const hasWeatherModelFuture =
+    openMeteoRemainingDayMaxC !== null || windyRemainingDayMaxC !== null;
+
+  if (
+    adjustedFutureMeanC !== null &&
+    modelFutureMeanC !== null &&
+    hasWeatherModelFuture
+  ) {
     adjustedFutureMeanC -= cooling.coolingAdjustmentC;
   }
 
@@ -692,7 +1296,11 @@ function computeWeatherInputs(snapshot: MultiChannelSnapshot, now: Date): Foreca
     If HKO has already observed a maximum and it is late in the day,
     avoid letting a model point from the edge of the settlement window overstate remaining upside.
   */
-  if (observedMaxC !== null && adjustedFutureMeanC !== null && adjustedFutureMeanC > observedMaxC) {
+  if (
+    observedMaxC !== null &&
+    adjustedFutureMeanC !== null &&
+    adjustedFutureMeanC > observedMaxC
+  ) {
     let lateDayUpsideCapC: number | null = null;
 
     if (hongKongHour >= 21) {
@@ -704,17 +1312,32 @@ function computeWeatherInputs(snapshot: MultiChannelSnapshot, now: Date): Foreca
     }
 
     if (lateDayUpsideCapC !== null) {
-      adjustedFutureMeanC = Math.min(adjustedFutureMeanC, observedMaxC + lateDayUpsideCapC);
+      adjustedFutureMeanC = Math.min(
+        adjustedFutureMeanC,
+        observedMaxC + lateDayUpsideCapC
+      );
     }
   }
 
   const forecastFinalMaxMeanC =
     observedMaxC !== null && adjustedFutureMeanC !== null
       ? Math.max(observedMaxC, adjustedFutureMeanC)
-      : adjustedFutureMeanC ?? observedMaxC ?? hkoCurrentTempC ?? openMeteoCurrentTempC ?? null;
+      : adjustedFutureMeanC ??
+        observedMaxC ??
+        hkoCurrentTempC ??
+        openMeteoCurrentTempC ??
+        officialForecastMaxC ??
+        null;
+
+  const hkoSourceAvailable =
+    hkoCurrentTempC !== null ||
+    observedMaxC !== null ||
+    hkoMinSinceMidnightC !== null ||
+    officialForecastMaxC !== null ||
+    hourlyRainfallMm !== null;
 
   const sourceCount =
-    1 +
+    (hkoSourceAvailable ? 1 : 0) +
     (openMeteoRemainingDayMaxC !== null ? 1 : 0) +
     (windyRemainingDayMaxC !== null ? 1 : 0);
 
@@ -724,6 +1347,7 @@ function computeWeatherInputs(snapshot: MultiChannelSnapshot, now: Date): Foreca
     observedMaxC,
     openMeteoRemainingDayMaxC,
     windyRemainingDayMaxC,
+    officialForecastMaxC,
     modelDisagreementC,
     rainProbabilityNext2hPct
   });
@@ -735,7 +1359,36 @@ function computeWeatherInputs(snapshot: MultiChannelSnapshot, now: Date): Foreca
     remainingSettlementHours: roundNumber(remainingSettlementHours, 2) ?? 0,
 
     hkoCurrentTempC: roundNumber(hkoCurrentTempC, 2),
+    currentTempC: roundNumber(hkoCurrentTempC, 2),
+    currentTemperatureC: roundNumber(hkoCurrentTempC, 2),
+
     observedMaxC: roundNumber(observedMaxC, 2),
+    observedMaxSoFarC: roundNumber(observedMaxC, 2),
+    observedMaxLowerBoundC: roundNumber(observedMaxC, 2),
+    observedFinalMaxLowerBoundC: roundNumber(observedMaxC, 2),
+
+    hkoMaxSoFarC: roundNumber(observedMaxC, 2),
+    hkoMaxSinceMidnightC: roundNumber(hkoMaxSinceMidnightC, 2),
+    maxSinceMidnightC: roundNumber(hkoMaxSinceMidnightC, 2),
+    maxSoFarC: roundNumber(observedMaxC, 2),
+
+    hkoMinSinceMidnightC: roundNumber(hkoMinSinceMidnightC, 2),
+    minSinceMidnightC: roundNumber(hkoMinSinceMidnightC, 2),
+    observedMinC: roundNumber(hkoMinSinceMidnightC, 2),
+    observedMinSoFarC: roundNumber(hkoMinSinceMidnightC, 2),
+    minSoFarC: roundNumber(hkoMinSinceMidnightC, 2),
+
+    officialForecastMaxC: roundNumber(officialForecastMaxC, 2),
+    hkoOfficialForecastMaxC: roundNumber(officialForecastMaxC, 2),
+    forecastMaxC: roundNumber(officialForecastMaxC, 2),
+    hkoForecastMaxC: roundNumber(officialForecastMaxC, 2),
+
+    observedHourlyRainfallMm: roundNumber(hourlyRainfallMm, 2),
+    hourlyRainfallMm: roundNumber(hourlyRainfallMm, 2),
+    rainfallLastHourMm: roundNumber(hourlyRainfallMm, 2),
+    rainfallPastHourMm: roundNumber(hourlyRainfallMm, 2),
+    rainHourlyMm: roundNumber(hourlyRainfallMm, 2),
+    rainfallMm: roundNumber(hourlyRainfallMm, 2),
 
     openMeteoCurrentTempC: roundNumber(openMeteoCurrentTempC, 2),
     openMeteoRemainingDayMaxC: roundNumber(openMeteoRemainingDayMaxC, 2),
@@ -750,7 +1403,6 @@ function computeWeatherInputs(snapshot: MultiChannelSnapshot, now: Date): Foreca
 
     rainProbabilityNext2hPct: roundNumber(rainProbabilityNext2hPct, 1),
     cloudCoverNowPct: roundNumber(cloudCoverNowPct, 1),
-    observedHourlyRainfallMm: roundNumber(observedHourlyRainfallMm, 2),
 
     modelDisagreementC: roundNumber(modelDisagreementC, 3),
     sourceCount,
@@ -941,7 +1593,10 @@ function calculateMarketWeight(params: {
     return clamp(params.marketWeightOverride, 0, 0.6);
   }
 
-  const validMarketCount = params.prepared.filter((item) => item.marketRawPrice !== null).length;
+  const validMarketCount = params.prepared.filter(
+    (item) => item.marketRawPrice !== null
+  ).length;
+
   const coverage =
     params.prepared.length > 0 ? validMarketCount / params.prepared.length : 0;
 
@@ -981,20 +1636,59 @@ function buildExplanationFactors(params: {
   const factors: string[] = [];
 
   if (params.impossible) {
-    factors.push("Observed HKO maximum has already reached or exceeded this range's upper bound.");
+    factors.push(
+      "Observed HKO maximum has already reached or exceeded this range's upper bound."
+    );
   }
 
   if (params.weather.observedMaxC !== null) {
-    factors.push(`Observed max so far: ${params.weather.observedMaxC.toFixed(1)}°C.`);
+    factors.push(
+      `Observed max so far: ${params.weather.observedMaxC.toFixed(1)}°C.`
+    );
+  }
+
+  if (params.weather.hkoCurrentTempC !== null) {
+    factors.push(
+      `Current HKO temperature: ${params.weather.hkoCurrentTempC.toFixed(1)}°C.`
+    );
+  }
+
+  if (params.weather.hkoMinSinceMidnightC !== null) {
+    factors.push(
+      `HKO min since midnight: ${params.weather.hkoMinSinceMidnightC.toFixed(
+        1
+      )}°C.`
+    );
+  }
+
+  if (params.weather.officialForecastMaxC !== null) {
+    factors.push(
+      `Official HKO forecast max: ${params.weather.officialForecastMaxC.toFixed(
+        1
+      )}°C.`
+    );
+  }
+
+  if (params.weather.hourlyRainfallMm !== null) {
+    factors.push(
+      `Observed hourly rainfall: ${params.weather.hourlyRainfallMm.toFixed(
+        1
+      )} mm.`
+    );
   }
 
   if (params.weather.forecastFinalMaxMeanC !== null) {
     factors.push(
-      `Forecast final daily max mean: ${params.weather.forecastFinalMaxMeanC.toFixed(2)}°C.`
+      `Forecast final daily max mean: ${params.weather.forecastFinalMaxMeanC.toFixed(
+        2
+      )}°C.`
     );
   }
 
-  if (params.weather.modelDisagreementC !== null && params.weather.modelDisagreementC >= 0.8) {
+  if (
+    params.weather.modelDisagreementC !== null &&
+    params.weather.modelDisagreementC >= 0.8
+  ) {
     factors.push(
       `Open-Meteo and Windy differ by ${params.weather.modelDisagreementC.toFixed(
         2
@@ -1032,6 +1726,159 @@ function formatPct(value: number | null | undefined, digits = 1) {
   return `${(value * 100).toFixed(digits)}%`;
 }
 
+function formatTemperature(value: number | null | undefined, digits = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return `${value.toFixed(digits)}°C`;
+}
+
+function formatRainfall(value: number | null | undefined, digits = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return `${value.toFixed(digits)} mm`;
+}
+
+function buildWarnings(params: {
+  sourceErrors: SourceError[];
+  marketStateError: string | null;
+  weather: ForecastWeatherInputs;
+  marketWeight: number;
+  marketProbabilitiesAvailable: boolean;
+}) {
+  const warnings: string[] = [];
+
+  for (const error of params.sourceErrors) {
+    const message = `${error.source}: ${error.message}`;
+
+    if (!warnings.includes(message)) {
+      warnings.push(message);
+    }
+  }
+
+  if (params.marketStateError) {
+    warnings.push(`Market state: ${params.marketStateError}`);
+  }
+
+  if (params.weather.hkoCurrentTempC === null) {
+    warnings.push("HKO current temperature is unavailable.");
+  }
+
+  if (params.weather.observedMaxC === null) {
+    warnings.push("Observed HKO max lower bound is unavailable.");
+  }
+
+  if (params.weather.officialForecastMaxC === null) {
+    warnings.push("Official HKO forecast max is unavailable.");
+  }
+
+  if (!params.marketProbabilitiesAvailable) {
+    warnings.push(
+      "Insufficient market prices are available; final probabilities are weather-only."
+    );
+  } else if (params.marketWeight <= 0) {
+    warnings.push(
+      "Market prices are available but market blending is disabled or weighted to zero."
+    );
+  }
+
+  return warnings;
+}
+
+function buildKeyDrivers(params: {
+  weather: ForecastWeatherInputs;
+  topOutcome: ForecastOutcome | null;
+  confidenceLabel: ForecastResult["model"]["confidenceLabel"];
+  marketWeight: number;
+  marketCoverage: number;
+  averageClobSpread: number | null;
+  warnings: string[];
+}) {
+  const drivers: string[] = [];
+
+  if (params.topOutcome) {
+    drivers.push(
+      `Top outcome is "${params.topOutcome.name}" at ${params.topOutcome.probabilityPct.toFixed(
+        1
+      )}% final probability.`
+    );
+  }
+
+  const weatherParts = [
+    params.weather.hkoCurrentTempC !== null
+      ? `current HKO ${formatTemperature(params.weather.hkoCurrentTempC)}`
+      : null,
+    params.weather.observedMaxC !== null
+      ? `observed max lower bound ${formatTemperature(
+          params.weather.observedMaxC
+        )}`
+      : null,
+    params.weather.hkoMinSinceMidnightC !== null
+      ? `min since midnight ${formatTemperature(
+          params.weather.hkoMinSinceMidnightC
+        )}`
+      : null
+  ].filter(Boolean);
+
+  if (weatherParts.length > 0) {
+    drivers.push(`HKO observations: ${weatherParts.join(", ")}.`);
+  }
+
+  if (params.weather.officialForecastMaxC !== null) {
+    drivers.push(
+      `Official HKO forecast max is ${formatTemperature(
+        params.weather.officialForecastMaxC
+      )}.`
+    );
+  }
+
+  if (params.weather.hourlyRainfallMm !== null) {
+    drivers.push(
+      `Observed hourly rainfall is ${formatRainfall(
+        params.weather.hourlyRainfallMm
+      )}.`
+    );
+  }
+
+  if (params.weather.forecastFinalMaxMeanC !== null) {
+    drivers.push(
+      `Forecast final daily max mean is ${formatTemperature(
+        params.weather.forecastFinalMaxMeanC,
+        2
+      )} with σ≈${params.weather.forecastFinalMaxStdDevC.toFixed(2)}°C.`
+    );
+  }
+
+  if (params.weather.modelDisagreementC !== null) {
+    drivers.push(
+      `Open-Meteo / Windy model disagreement is ${params.weather.modelDisagreementC.toFixed(
+        2
+      )}°C.`
+    );
+  }
+
+  if (params.marketWeight > 0) {
+    drivers.push(
+      `Market blend weight is ${(params.marketWeight * 100).toFixed(
+        0
+      )}% with ${(params.marketCoverage * 100).toFixed(0)}% market coverage.`
+    );
+  } else {
+    drivers.push("Final probabilities are weather-only or fallback-normalized.");
+  }
+
+  if (params.averageClobSpread !== null) {
+    drivers.push(
+      `Average CLOB spread is ${(params.averageClobSpread * 100).toFixed(1)} percentage points.`
+    );
+  }
+
+  if (params.warnings.length > 0) {
+    drivers.push(`Main warning: ${params.warnings[0]}`);
+  }
+
+  drivers.push(`Confidence is ${params.confidenceLabel}.`);
+
+  return drivers.slice(0, 8);
+}
+
 function buildSummary(params: {
   weather: ForecastWeatherInputs;
   topOutcome: ForecastOutcome | null;
@@ -1047,11 +1894,47 @@ function buildSummary(params: {
       )}%.`
     );
   } else {
-    pieces.push("No outcome probabilities available because no market outcomes are loaded.");
+    pieces.push(
+      "No outcome probabilities available because no market outcomes are loaded."
+    );
   }
 
   if (params.weather.observedMaxC !== null) {
-    pieces.push(`HKO max so far is ${params.weather.observedMaxC.toFixed(1)}°C.`);
+    pieces.push(
+      `HKO max lower bound is ${params.weather.observedMaxC.toFixed(1)}°C.`
+    );
+  }
+
+  if (params.weather.hkoCurrentTempC !== null) {
+    pieces.push(
+      `Current HKO temperature is ${params.weather.hkoCurrentTempC.toFixed(
+        1
+      )}°C.`
+    );
+  }
+
+  if (params.weather.hkoMinSinceMidnightC !== null) {
+    pieces.push(
+      `HKO min since midnight is ${params.weather.hkoMinSinceMidnightC.toFixed(
+        1
+      )}°C.`
+    );
+  }
+
+  if (params.weather.officialForecastMaxC !== null) {
+    pieces.push(
+      `Official HKO forecast max is ${params.weather.officialForecastMaxC.toFixed(
+        1
+      )}°C.`
+    );
+  }
+
+  if (params.weather.hourlyRainfallMm !== null) {
+    pieces.push(
+      `Observed hourly rainfall is ${params.weather.hourlyRainfallMm.toFixed(
+        1
+      )} mm.`
+    );
   }
 
   if (params.weather.forecastFinalMaxMeanC !== null) {
@@ -1079,9 +1962,13 @@ function buildSummary(params: {
   }
 
   if (params.marketWeight > 0) {
-    pieces.push(`Market blend weight is ${(params.marketWeight * 100).toFixed(0)}%.`);
+    pieces.push(
+      `Market blend weight is ${(params.marketWeight * 100).toFixed(0)}%.`
+    );
   } else {
-    pieces.push("Market blend is disabled or insufficient market prices are available.");
+    pieces.push(
+      "Market blend is disabled or insufficient market prices are available."
+    );
   }
 
   pieces.push(`Confidence is ${params.confidenceLabel}.`);
@@ -1105,6 +1992,9 @@ export function buildForecastFromMultiChannelSnapshot(params: {
   const confidence = estimateConfidence({
     observedMaxC: weather.observedMaxC,
     hkoCurrentTempC: weather.hkoCurrentTempC,
+    hkoMinSinceMidnightC: weather.hkoMinSinceMidnightC,
+    officialForecastMaxC: weather.officialForecastMaxC,
+    hourlyRainfallMm: weather.hourlyRainfallMm,
     openMeteoRemainingDayMaxC: weather.openMeteoRemainingDayMaxC,
     windyRemainingDayMaxC: weather.windyRemainingDayMaxC,
     modelDisagreementC: weather.modelDisagreementC,
@@ -1158,14 +2048,18 @@ export function buildForecastFromMultiChannelSnapshot(params: {
 
   const eligible = prepared.map((item) => !item.impossible);
 
-  const noEligibleOutcomes = prepared.length > 0 && eligible.every((value) => !value);
+  const noEligibleOutcomes =
+    prepared.length > 0 && eligible.every((value) => !value);
 
   const weatherProbabilities = normalizeScores(
     prepared.map((item) => item.weatherScore),
     eligible
   );
 
-  const marketValidCount = prepared.filter((item) => item.marketRawPrice !== null).length;
+  const marketValidCount = prepared.filter(
+    (item) => item.marketRawPrice !== null
+  ).length;
+
   const marketProbabilitiesAvailable =
     prepared.length > 0 &&
     marketValidCount >= 2 &&
@@ -1195,7 +2089,10 @@ export function buildForecastFromMultiChannelSnapshot(params: {
         : null;
 
     if (marketWeight > 0 && marketProbability !== null) {
-      return weatherProbability * (1 - marketWeight) + marketProbability * marketWeight;
+      return (
+        weatherProbability * (1 - marketWeight) +
+        marketProbability * marketWeight
+      );
     }
 
     return weatherProbability;
@@ -1224,6 +2121,37 @@ export function buildForecastFromMultiChannelSnapshot(params: {
         ? (marketProbabilities[index] as number)
         : null;
 
+    const probabilityRounded = roundNumber(probability, 8) ?? 0;
+    const probabilityPctRounded = roundNumber(probability * 100, 4) ?? 0;
+
+    const weatherProbabilityRounded =
+      roundNumber(weatherProbability, 8) ?? 0;
+    const weatherProbabilityPctRounded =
+      roundNumber(weatherProbability * 100, 4) ?? 0;
+
+    const marketProbabilityRounded = roundNumber(marketProbability, 8);
+    const marketProbabilityPctRounded =
+      marketProbability === null
+        ? null
+        : roundNumber(marketProbability * 100, 4);
+
+    const clobBestBid = roundNumber(getClobBuyPrice(item.clob), 8);
+    const clobBestAsk = roundNumber(getClobSellPrice(item.clob), 8);
+    const gammaProbability = roundNumber(
+      getClobGammaPrice(item.clob) ?? getOutcomeGammaPrice(item.outcome),
+      8
+    );
+
+    const edge =
+      marketProbabilityRounded === null
+        ? null
+        : weatherProbabilityRounded - marketProbabilityRounded;
+
+    const finalEdge =
+      marketProbabilityRounded === null
+        ? null
+        : probabilityRounded - marketProbabilityRounded;
+
     return {
       ...item.outcome,
 
@@ -1233,28 +2161,59 @@ export function buildForecastFromMultiChannelSnapshot(params: {
       lower: item.lower,
       upper: item.upper,
 
-      probability: roundNumber(probability, 8) ?? 0,
-      probabilityPct: roundNumber(probability * 100, 4) ?? 0,
+      probability: probabilityRounded,
+      probabilityPct: probabilityPctRounded,
 
-      weatherProbability: roundNumber(weatherProbability, 8) ?? 0,
-      weatherProbabilityPct: roundNumber(weatherProbability * 100, 4) ?? 0,
+      modelProbability: probabilityRounded,
+      modelProbabilityPct: probabilityPctRounded,
 
-      marketProbability: roundNumber(marketProbability, 8),
-      marketProbabilityPct:
-        marketProbability === null ? null : roundNumber(marketProbability * 100, 4),
+      forecastProbability: probabilityRounded,
+      forecastProbabilityPct: probabilityPctRounded,
+
+      finalProbability: probabilityRounded,
+      finalProbabilityPct: probabilityPctRounded,
+
+      blendedProbability: probabilityRounded,
+      blendedProbabilityPct: probabilityPctRounded,
+
+      weatherProbability: weatherProbabilityRounded,
+      weatherProbabilityPct: weatherProbabilityPctRounded,
+      weatherFairProbability: weatherProbabilityRounded,
+      weatherFairProbabilityPct: weatherProbabilityPctRounded,
+
+      marketProbability: marketProbabilityRounded,
+      marketProbabilityPct: marketProbabilityPctRounded,
+      polymarketProbability: marketProbabilityRounded,
+      polymarketProbabilityPct: marketProbabilityPctRounded,
 
       marketRawPrice: roundNumber(item.marketRawPrice, 8),
 
       clobMidpoint: roundNumber(getClobMidpoint(item.clob), 8),
       clobSpread: roundNumber(getClobSpread(item.clob), 8),
-      clobBuyPrice: roundNumber(getClobBuyPrice(item.clob), 8),
-      clobSellPrice: roundNumber(getClobSellPrice(item.clob), 8),
-      gammaPrice: roundNumber(
-        getClobGammaPrice(item.clob) ?? getOutcomeGammaPrice(item.outcome),
-        8
-      ),
+      clobBuyPrice: clobBestBid,
+      clobSellPrice: clobBestAsk,
+
+      clobBestBid,
+      clobBestAsk,
+      bestBid: clobBestBid,
+      bestAsk: clobBestAsk,
+
+      gammaPrice: gammaProbability,
+      gammaProbability,
+      gammaProbabilityPct:
+        gammaProbability === null ? null : roundNumber(gammaProbability * 100, 4),
+
+      edge: roundNumber(edge, 8),
+      edgePct: edge === null ? null : roundNumber(edge * 100, 4),
+      fairEdge: roundNumber(edge, 8),
+      fairEdgePct: edge === null ? null : roundNumber(edge * 100, 4),
+      finalEdge: roundNumber(finalEdge, 8),
+      finalEdgePct: finalEdge === null ? null : roundNumber(finalEdge * 100, 4),
 
       isImpossibleByObservedMax: item.impossible,
+      impossibleByObservedMax: item.impossible,
+      observedMaxLowerBoundC: weather.observedMaxC,
+
       explanationFactors: item.explanationFactors
     };
   });
@@ -1270,13 +2229,44 @@ export function buildForecastFromMultiChannelSnapshot(params: {
   const marketCoverage =
     prepared.length > 0 ? marketValidCount / prepared.length : 0;
 
+  const warnings = buildWarnings({
+    sourceErrors: params.snapshot.errors,
+    marketStateError: params.marketStateError ?? null,
+    weather,
+    marketWeight,
+    marketProbabilitiesAvailable
+  });
+
+  const keyDrivers = buildKeyDrivers({
+    weather,
+    topOutcome,
+    confidenceLabel: confidence.confidenceLabel,
+    marketWeight,
+    marketCoverage,
+    averageClobSpread,
+    warnings
+  });
+
+  const hkoSourceAvailable =
+    weather.hkoCurrentTempC !== null ||
+    weather.observedMaxC !== null ||
+    weather.hkoMinSinceMidnightC !== null ||
+    weather.officialForecastMaxC !== null ||
+    weather.hourlyRainfallMm !== null;
+
   const result: ForecastResult = {
     version: FORECAST_ENGINE_VERSION,
     generatedAt: new Date().toISOString(),
 
+    hktDate: weather.forecastTargetDate,
+    forecastDate: weather.forecastTargetDate,
+    date: weather.forecastTargetDate,
+
     market: {
       loaded: params.outcomes.length > 0 && !params.marketStateError,
-      title: asString(params.marketState.title) ?? asString(params.marketState.question),
+      title:
+        asString(params.marketState.title) ??
+        asString(params.marketState.question),
       slug: asString(params.marketState.slug),
       eventSlug: asString(params.marketState.eventSlug),
       conditionId: asString(params.marketState.conditionId),
@@ -1287,6 +2277,38 @@ export function buildForecastFromMultiChannelSnapshot(params: {
       error: params.marketStateError ?? null
     },
 
+    hkoCurrentTempC: weather.hkoCurrentTempC,
+    currentTempC: weather.currentTempC,
+    currentTemperatureC: weather.currentTemperatureC,
+
+    observedMaxC: weather.observedMaxC,
+    observedMaxSoFarC: weather.observedMaxSoFarC,
+    observedMaxLowerBoundC: weather.observedMaxLowerBoundC,
+    observedFinalMaxLowerBoundC: weather.observedFinalMaxLowerBoundC,
+
+    hkoMaxSoFarC: weather.hkoMaxSoFarC,
+    hkoMaxSinceMidnightC: weather.hkoMaxSinceMidnightC,
+    maxSinceMidnightC: weather.maxSinceMidnightC,
+    maxSoFarC: weather.maxSoFarC,
+
+    hkoMinSinceMidnightC: weather.hkoMinSinceMidnightC,
+    minSinceMidnightC: weather.minSinceMidnightC,
+    observedMinC: weather.observedMinC,
+    observedMinSoFarC: weather.observedMinSoFarC,
+    minSoFarC: weather.minSoFarC,
+
+    officialForecastMaxC: weather.officialForecastMaxC,
+    hkoOfficialForecastMaxC: weather.hkoOfficialForecastMaxC,
+    forecastMaxC: weather.forecastMaxC,
+    hkoForecastMaxC: weather.hkoForecastMaxC,
+
+    observedHourlyRainfallMm: weather.observedHourlyRainfallMm,
+    hourlyRainfallMm: weather.hourlyRainfallMm,
+    rainfallLastHourMm: weather.rainfallLastHourMm,
+    rainfallPastHourMm: weather.rainfallPastHourMm,
+    rainHourlyMm: weather.rainHourlyMm,
+    rainfallMm: weather.rainfallMm,
+
     weather,
 
     model: {
@@ -1296,12 +2318,22 @@ export function buildForecastFromMultiChannelSnapshot(params: {
       marketWeight: roundNumber(marketWeight, 4) ?? 0,
       marketCoverage: roundNumber(marketCoverage, 4) ?? 0,
       averageClobSpread: roundNumber(averageClobSpread, 6),
-      confidenceScore: roundNumber(confidence.confidenceScore, 4) ?? confidence.confidenceScore,
+      confidenceScore:
+        roundNumber(confidence.confidenceScore, 4) ?? confidence.confidenceScore,
       confidenceLabel: confidence.confidenceLabel
     },
 
+    confidence:
+      roundNumber(confidence.confidenceScore, 4) ?? confidence.confidenceScore,
+    confidenceLabel: confidence.confidenceLabel,
+
     outcomes,
+    probabilities: outcomes,
+    outcomeProbabilities: outcomes,
     topOutcome,
+
+    keyDrivers,
+    warnings,
 
     summary: buildSummary({
       weather,
@@ -1312,7 +2344,7 @@ export function buildForecastFromMultiChannelSnapshot(params: {
 
     diagnostics: {
       sourceStatus: {
-        hko: true,
+        hko: hkoSourceAvailable,
         openMeteo: params.snapshot.openMeteo !== null,
         windy: Boolean(params.snapshot.windy?.enabled),
         polymarketClob: Boolean(params.snapshot.polymarketClob?.enabled)
@@ -1324,9 +2356,21 @@ export function buildForecastFromMultiChannelSnapshot(params: {
         "Outcome ranges are treated as lower-inclusive and upper-exclusive.",
         "The forecast horizon is restricted to the remaining part of the current Hong Kong calendar day.",
         "The daily maximum cannot finish below the maximum already observed by HKO.",
+        "The observed max lower bound is max(HKO max since midnight, HKO current temperature).",
+        "Official HKO forecast max is used as a forecast prior, not as an observed lower bound.",
         "Weather fair probabilities come from a normal distribution around the same-day final maximum estimate.",
         "When sufficient market prices are available, final probabilities blend weather fair probabilities with CLOB/Gamma-implied probabilities."
-      ]
+      ],
+
+      hkoCurrentTempC: weather.hkoCurrentTempC,
+      hkoMaxSinceMidnightC: weather.hkoMaxSinceMidnightC,
+      hkoMinSinceMidnightC: weather.hkoMinSinceMidnightC,
+      officialForecastMaxC: weather.officialForecastMaxC,
+      hourlyRainfallMm: weather.hourlyRainfallMm,
+      observedMaxLowerBoundC: weather.observedMaxLowerBoundC,
+
+      keyDrivers,
+      warnings
     }
   };
 
@@ -1337,7 +2381,9 @@ export function buildForecastFromMultiChannelSnapshot(params: {
   return result;
 }
 
-export async function getForecast(options: GetForecastOptions = {}): Promise<ForecastResult> {
+export async function getForecast(
+  options: GetForecastOptions = {}
+): Promise<ForecastResult> {
   const includeClob = options.includeClob ?? true;
 
   let marketState: MarketStateLike = {};
@@ -1371,9 +2417,14 @@ export function summarizeForecastForPrompt(forecast: ForecastResult) {
   return {
     version: forecast.version,
     generatedAt: forecast.generatedAt,
+    hktDate: forecast.hktDate,
     market: forecast.market,
     weather: forecast.weather,
     model: forecast.model,
+    confidence: forecast.confidence,
+    confidenceLabel: forecast.confidenceLabel,
+    keyDrivers: forecast.keyDrivers,
+    warnings: forecast.warnings,
     topOutcome: forecast.topOutcome
       ? {
           name: forecast.topOutcome.name,
