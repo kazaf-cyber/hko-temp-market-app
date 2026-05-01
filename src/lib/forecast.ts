@@ -249,16 +249,24 @@ export type ForecastResult = {
   summary: string;
 
   diagnostics: {
-    sourceStatus: {
-      hko: boolean;
-      openMeteo: boolean;
-      windy: boolean;
-      polymarketClob: boolean;
-    };
-    sourceErrors: SourceError[];
-    marketStateError: string | null;
-    noEligibleOutcomes: boolean;
-    assumptions: string[];
+  sourceStatus: {
+    hko: boolean;
+    openMeteo: boolean;
+    windy: boolean;
+    polymarketClob: boolean;
+  };
+  sourceErrors: SourceError[];
+  marketStateError: string | null;
+  noEligibleOutcomes: boolean;
+
+  marketProbabilitiesAvailable: boolean;
+  marketEvaluatedOutcomeCount: number;
+  marketValidCount: number;
+  marketCoverage: number;
+  marketWeight: number;
+  averageClobSpread: number | null;
+
+  assumptions: string[];
 
     hkoCurrentTempC: number | null;
     hkoMaxSinceMidnightC: number | null;
@@ -500,16 +508,41 @@ function getClobYesTokenIds(item: ClobRow) {
 
 function getOutcomeGammaPrice(outcome: OutcomeRange) {
   return getFirstNormalizedPriceField(outcome, [
+    /*
+      Normalized market probability aliases.
+      Accept both 0..1 and 0..100 because normalizePrice() handles both.
+    */
+    "marketProbability",
+    "marketProbabilityPct",
+    "polymarketProbability",
+    "polymarketProbabilityPct",
+
+    /*
+      Gamma / legacy price aliases.
+    */
     "marketPrice",
     "price",
+    "yesPrice",
+    "lastPrice",
+    "gammaProbability",
+    "gammaProbabilityPct",
     "gammaPrice",
     "gammaYesPrice",
-    "lastPrice"
+    "gammaLastPrice"
   ]);
 }
 
-function getClobMidpoint(clob: ClobRow | null) {
-  return getFirstNormalizedPriceField(clob, [
+function getClobMidpoint(value: unknown) {
+  return getFirstNormalizedPriceField(value, [
+    /*
+      Names used by route.ts / UI normalization.
+    */
+    "clobMidpoint",
+    "clobMid",
+
+    /*
+      Generic CLOB aliases.
+    */
     "midpoint",
     "mid",
     "midPrice",
@@ -517,38 +550,67 @@ function getClobMidpoint(clob: ClobRow | null) {
   ]);
 }
 
-function getClobBuyPrice(clob: ClobRow | null) {
-  return getFirstNormalizedPriceField(clob, [
-    "buyPrice",
-    "bid",
+function getClobBuyPrice(value: unknown) {
+  return getFirstNormalizedPriceField(value, [
+    /*
+      Names used by route.ts / UI normalization.
+    */
+    "clobBestBid",
+
+    /*
+      Generic bid aliases.
+    */
     "bestBid",
     "bestBidPrice",
-    "yesBid"
+    "bid",
+    "buyPrice",
+    "yesBid",
+    "yesBestBid",
+    "yesBestBidPrice"
   ]);
 }
 
-function getClobSellPrice(clob: ClobRow | null) {
-  return getFirstNormalizedPriceField(clob, [
-    "sellPrice",
-    "ask",
+function getClobSellPrice(value: unknown) {
+  return getFirstNormalizedPriceField(value, [
+    /*
+      Names used by route.ts / UI normalization.
+    */
+    "clobBestAsk",
+
+    /*
+      Generic ask aliases.
+    */
     "bestAsk",
     "bestAskPrice",
-    "yesAsk"
+    "ask",
+    "sellPrice",
+    "yesAsk",
+    "yesBestAsk",
+    "yesBestAskPrice"
   ]);
 }
 
-function getClobSpread(clob: ClobRow | null) {
-  const directSpread = getFirstNormalizedPriceField(clob, [
+function getClobSpread(value: unknown) {
+  const directSpread = getFirstNormalizedPriceField(value, [
+    /*
+      Names used by route.ts / UI normalization.
+    */
+    "clobSpread",
+
+    /*
+      Generic spread aliases.
+    */
     "spread",
-    "bidAskSpread"
+    "bidAskSpread",
+    "bestBidAskSpread"
   ]);
 
   if (directSpread !== null) {
     return directSpread;
   }
 
-  const buyPrice = getClobBuyPrice(clob);
-  const sellPrice = getClobSellPrice(clob);
+  const buyPrice = getClobBuyPrice(value);
+  const sellPrice = getClobSellPrice(value);
 
   if (buyPrice !== null && sellPrice !== null) {
     return Math.max(0, sellPrice - buyPrice);
@@ -557,11 +619,26 @@ function getClobSpread(clob: ClobRow | null) {
   return null;
 }
 
-function getClobGammaPrice(clob: ClobRow | null) {
-  return getFirstNormalizedPriceField(clob, [
+function getClobGammaPrice(value: unknown) {
+  return getFirstNormalizedPriceField(value, [
+    /*
+      Gamma aliases.
+    */
+    "gammaProbability",
+    "gammaProbabilityPct",
     "gammaYesPrice",
     "gammaPrice",
+    "gammaLastPrice",
+
+    /*
+      General Polymarket / market aliases.
+    */
+    "marketProbability",
+    "marketProbabilityPct",
+    "polymarketProbability",
+    "polymarketProbabilityPct",
     "marketPrice",
+    "yesPrice",
     "price",
     "lastPrice"
   ]);
@@ -1551,29 +1628,99 @@ function findClobRow(
 }
 
 function getMarketRawPrice(outcome: OutcomeRange, clob: ClobRow | null) {
-  const midpoint = getClobMidpoint(clob);
-  const buyPrice = getClobBuyPrice(clob);
-  const sellPrice = getClobSellPrice(clob);
+  /*
+    Prefer true CLOB midpoint / synthetic bid-ask midpoint.
+    Then fall back to outcome-level CLOB aliases.
+    Then fall back to Gamma / general market price.
+  */
 
-  const syntheticMidpoint =
-    buyPrice !== null && sellPrice !== null
-      ? normalizePrice((buyPrice + sellPrice) / 2)
+  const clobMidpoint = getClobMidpoint(clob);
+  const clobBuyPrice = getClobBuyPrice(clob);
+  const clobSellPrice = getClobSellPrice(clob);
+
+  const clobSyntheticMidpoint =
+    clobBuyPrice !== null && clobSellPrice !== null
+      ? normalizePrice((clobBuyPrice + clobSellPrice) / 2)
+      : null;
+
+  /*
+    Some rows may carry CLOB fields directly on the Admin/state outcome row,
+    not only inside snapshot.polymarketClob.outcomes.
+  */
+  const outcomeMidpoint = getClobMidpoint(outcome);
+  const outcomeBuyPrice = getClobBuyPrice(outcome);
+  const outcomeSellPrice = getClobSellPrice(outcome);
+
+  const outcomeSyntheticMidpoint =
+    outcomeBuyPrice !== null && outcomeSellPrice !== null
+      ? normalizePrice((outcomeBuyPrice + outcomeSellPrice) / 2)
       : null;
 
   const gammaFromClob = getClobGammaPrice(clob);
   const gammaFromOutcome = getOutcomeGammaPrice(outcome);
 
-  return midpoint ?? syntheticMidpoint ?? gammaFromClob ?? gammaFromOutcome;
+  return (
+    clobMidpoint ??
+    clobSyntheticMidpoint ??
+    outcomeMidpoint ??
+    outcomeSyntheticMidpoint ??
+    gammaFromClob ??
+    gammaFromOutcome
+  );
+}
+
+function getRowsForMarketCoverage(prepared: PreparedOutcome[]) {
+  /*
+    Market coverage should be evaluated mainly on still-possible outcomes.
+
+    If observed max has already made lower buckets impossible, those impossible
+    buckets should not drag market coverage down and disable blending for the
+    remaining possible settlement buckets.
+  */
+  const eligible = prepared.filter((item) => !item.impossible);
+
+  return eligible.length > 0 ? eligible : prepared;
 }
 
 function getAverageClobSpread(prepared: PreparedOutcome[]) {
-  const spreads = prepared
-    .map((item) => getClobSpread(item.clob))
+  const rows = getRowsForMarketCoverage(prepared);
+
+  const spreads = rows
+    .map((item) => getClobSpread(item.clob) ?? getClobSpread(item.outcome))
     .filter((value): value is number => value !== null);
 
   if (spreads.length === 0) return null;
 
   return spreads.reduce((acc, value) => acc + value, 0) / spreads.length;
+}
+
+function getMarketCoverageStats(prepared: PreparedOutcome[]) {
+  const rows = getRowsForMarketCoverage(prepared);
+
+  const validMarketCount = rows.filter(
+    (item) => item.marketRawPrice !== null
+  ).length;
+
+  const coverage = rows.length > 0 ? validMarketCount / rows.length : 0;
+
+  /*
+    Normally require at least 2 market-priced outcomes so normalization is
+    meaningful. If only one eligible outcome remains, one valid price is enough
+    because the final distribution is already effectively determined.
+  */
+  const requiredValidCount = rows.length <= 1 ? rows.length : 2;
+
+  const available =
+    rows.length > 0 &&
+    validMarketCount >= requiredValidCount &&
+    coverage >= 0.5;
+
+  return {
+    evaluatedOutcomeCount: rows.length,
+    validMarketCount,
+    coverage,
+    available
+  };
 }
 
 function calculateMarketWeight(params: {
@@ -1586,22 +1733,17 @@ function calculateMarketWeight(params: {
     return 0;
   }
 
+  const marketCoverage = getMarketCoverageStats(params.prepared);
+
+  if (!marketCoverage.available) {
+    return 0;
+  }
+
   if (
     typeof params.marketWeightOverride === "number" &&
     Number.isFinite(params.marketWeightOverride)
   ) {
     return clamp(params.marketWeightOverride, 0, 0.6);
-  }
-
-  const validMarketCount = params.prepared.filter(
-    (item) => item.marketRawPrice !== null
-  ).length;
-
-  const coverage =
-    params.prepared.length > 0 ? validMarketCount / params.prepared.length : 0;
-
-  if (validMarketCount < 2 || coverage < 0.5) {
-    return 0;
   }
 
   let weight = 0.22;
@@ -1620,7 +1762,7 @@ function calculateMarketWeight(params: {
     }
   }
 
-  weight *= clamp(coverage, 0.5, 1);
+  weight *= clamp(marketCoverage.coverage, 0.5, 1);
 
   return clamp(weight, 0, 0.35);
 }
@@ -1712,7 +1854,7 @@ function buildExplanationFactors(params: {
     );
   }
 
-  const clobMidpoint = getClobMidpoint(params.clob);
+  const clobMidpoint =   getClobMidpoint(params.clob) ?? getClobMidpoint(params.outcome);
 
   if (clobMidpoint !== null) {
     factors.push(`CLOB midpoint available: ${clobMidpoint.toFixed(3)}.`);
@@ -2135,12 +2277,26 @@ export function buildForecastFromMultiChannelSnapshot(params: {
         ? null
         : roundNumber(marketProbability * 100, 4);
 
-    const clobBestBid = roundNumber(getClobBuyPrice(item.clob), 8);
-    const clobBestAsk = roundNumber(getClobSellPrice(item.clob), 8);
-    const gammaProbability = roundNumber(
-      getClobGammaPrice(item.clob) ?? getOutcomeGammaPrice(item.outcome),
-      8
-    );
+    const clobMidpointValue =
+  getClobMidpoint(item.clob) ?? getClobMidpoint(item.outcome);
+
+const clobSpreadValue =
+  getClobSpread(item.clob) ?? getClobSpread(item.outcome);
+
+const clobBestBid = roundNumber(
+  getClobBuyPrice(item.clob) ?? getClobBuyPrice(item.outcome),
+  8
+);
+
+const clobBestAsk = roundNumber(
+  getClobSellPrice(item.clob) ?? getClobSellPrice(item.outcome),
+  8
+);
+
+const gammaProbability = roundNumber(
+  getClobGammaPrice(item.clob) ?? getOutcomeGammaPrice(item.outcome),
+  8
+);
 
     const edge =
       marketProbabilityRounded === null
@@ -2188,8 +2344,8 @@ export function buildForecastFromMultiChannelSnapshot(params: {
 
       marketRawPrice: roundNumber(item.marketRawPrice, 8),
 
-      clobMidpoint: roundNumber(getClobMidpoint(item.clob), 8),
-      clobSpread: roundNumber(getClobSpread(item.clob), 8),
+      clobMidpoint: roundNumber(clobMidpointValue, 8),
+      clobSpread: roundNumber(clobSpreadValue, 8),
       clobBuyPrice: clobBestBid,
       clobSellPrice: clobBestAsk,
 
@@ -2343,16 +2499,24 @@ export function buildForecastFromMultiChannelSnapshot(params: {
     }),
 
     diagnostics: {
-      sourceStatus: {
-        hko: hkoSourceAvailable,
-        openMeteo: params.snapshot.openMeteo !== null,
-        windy: Boolean(params.snapshot.windy?.enabled),
-        polymarketClob: Boolean(params.snapshot.polymarketClob?.enabled)
-      },
-      sourceErrors: params.snapshot.errors,
-      marketStateError: params.marketStateError ?? null,
-      noEligibleOutcomes,
-      assumptions: [
+  sourceStatus: {
+    hko: hkoSourceAvailable,
+    openMeteo: params.snapshot.openMeteo !== null,
+    windy: Boolean(params.snapshot.windy?.enabled),
+    polymarketClob: Boolean(params.snapshot.polymarketClob?.enabled)
+  },
+  sourceErrors: params.snapshot.errors,
+  marketStateError: params.marketStateError ?? null,
+  noEligibleOutcomes,
+
+  marketProbabilitiesAvailable,
+  marketEvaluatedOutcomeCount: marketCoverageStats.evaluatedOutcomeCount,
+  marketValidCount: marketCoverageStats.validMarketCount,
+  marketCoverage: roundNumber(marketCoverage, 4) ?? 0,
+  marketWeight: roundNumber(marketWeight, 4) ?? 0,
+  averageClobSpread: roundNumber(averageClobSpread, 6),
+
+  assumptions: [
         "Outcome ranges are treated as lower-inclusive and upper-exclusive.",
         "The forecast horizon is restricted to the remaining part of the current Hong Kong calendar day.",
         "The daily maximum cannot finish below the maximum already observed by HKO.",
