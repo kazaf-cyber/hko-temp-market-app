@@ -1,299 +1,122 @@
 import { NextResponse } from "next/server";
-import { estimateForecast } from "@/lib/forecast";
-import { getHkoWeatherSnapshot } from "@/lib/hko";
-import { generatePoeExplanation } from "@/lib/poe";
-import { saveForecastRun } from "@/lib/db";
-import { getMarketState } from "@/lib/state";
-import { forecastApiRequestSchema } from "@/lib/validation";
-import type {
-  ForecastResult,
-  MarketState,
-  OutcomeRange,
-  RainIntensity
-} from "@/types";
+import { getForecast, type GetForecastOptions } from "@/lib/forecast";
+import { getPoeForecastCommentary } from "@/lib/poe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type HistorySaveResult = {
-  saved: boolean;
-  reason: string | null;
-};
+function parseBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
 
-function toNumber(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+    if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
   }
 
-  if (typeof value === "string" && value.trim() !== "") {
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+
+  return fallback;
+}
+
+function parseNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+
+  if (typeof value === "string") {
     const parsed = Number(value);
-
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
+    return Number.isFinite(parsed) ? parsed : undefined;
   }
 
-  return fallback;
+  return undefined;
 }
 
-function toNullableNumber(
-  value: unknown,
-  fallback: number | null
-): number | null {
-  if (value === null) {
-    return null;
-  }
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return fallback;
-}
-
-function toNullableNonNegativeInt(
-  value: unknown,
-  fallback: number | null
-): number | null {
-  const parsed = toNullableNumber(value, fallback);
-
-  if (parsed === null) {
-    return null;
-  }
-
-  return Math.max(0, Math.round(parsed));
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function toProbability(value: unknown, fallback: number): number {
-  return clamp(toNumber(value, fallback), 0, 1);
-}
-
-function toCloudCover(value: unknown, fallback: number): number {
-  return clamp(toNumber(value, fallback), 0, 100);
-}
-
-function toRainIntensity(
-  value: unknown,
-  fallback: RainIntensity
-): RainIntensity {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value as RainIntensity;
-  }
-
-  return fallback;
-}
-
-function normalizeOutcome(value: unknown): OutcomeRange | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const name = value.name;
-
-  if (typeof name !== "string" || name.trim().length === 0) {
-    return null;
-  }
-
-  const lower = toNullableNumber(value.lower, null);
-  const upper = toNullableNumber(value.upper, null);
-
+function buildForecastPayload(params: {
+  forecast: Awaited<ReturnType<typeof getForecast>>;
+  aiCommentary: Awaited<ReturnType<typeof getPoeForecastCommentary>> | null;
+}) {
   return {
-    ...value,
-    name,
-    lower,
-    upper,
+    ok: true,
+    generatedAt: params.forecast.generatedAt,
 
-    marketPrice: toNullableNumber(value.marketPrice, null),
-    price: toNullableNumber(value.price, null),
+    /*
+      New canonical shape.
+    */
+    data: params.forecast,
+    ai: params.aiCommentary,
 
-    marketPriceSource:
-      typeof value.marketPriceSource === "string"
-        ? value.marketPriceSource
-        : null,
-
-    yesPrice: toNullableNumber(value.yesPrice, null),
-    noPrice: toNullableNumber(value.noPrice, null),
-
-    tokenId:
-      typeof value.tokenId === "string" ? value.tokenId : null,
-
-    clobTokenId:
-      typeof value.clobTokenId === "string" ? value.clobTokenId : null,
-
-    yesTokenId:
-      typeof value.yesTokenId === "string" ? value.yesTokenId : null,
-
-    noTokenId:
-      typeof value.noTokenId === "string" ? value.noTokenId : null,
-
-    clobMidpoint: toNullableNumber(value.clobMidpoint, null),
-    yesAsk: toNullableNumber(value.yesAsk, null),
-    noAsk: toNullableNumber(value.noAsk, null),
-    yesBid: toNullableNumber(value.yesBid, null),
-    clobSpread: toNullableNumber(value.clobSpread, null)
+    /*
+      Backward-friendly aliases for older UI code.
+    */
+    forecast: params.forecast,
+    outcomes: params.forecast.outcomes,
+    probabilities: params.forecast.outcomes.map((outcome) => ({
+      name: outcome.name,
+      lower: outcome.lower,
+      upper: outcome.upper,
+      probability: outcome.probability,
+      probabilityPct: outcome.probabilityPct,
+      weatherProbability: outcome.weatherProbability,
+      weatherProbabilityPct: outcome.weatherProbabilityPct,
+      marketProbability: outcome.marketProbability,
+      marketProbabilityPct: outcome.marketProbabilityPct,
+      rank: outcome.rank,
+      isImpossibleByObservedMax: outcome.isImpossibleByObservedMax
+    })),
+    topOutcome: params.forecast.topOutcome,
+    summary: params.forecast.summary,
+    weather: params.forecast.weather,
+    model: params.forecast.model,
+    diagnostics: params.forecast.diagnostics
   };
 }
 
-function normalizeOutcomes(
-  value: unknown,
-  fallback: OutcomeRange[]
-): OutcomeRange[] {
-  const source = Array.isArray(value) ? value : fallback;
+async function runForecast(options: GetForecastOptions & { ai?: boolean }) {
+  const forecast = await getForecast(options);
 
-  const outcomes = source
-    .map((item) => normalizeOutcome(item))
-    .filter((item): item is OutcomeRange => item !== null);
+  const aiCommentary = options.ai
+    ? await getPoeForecastCommentary(forecast)
+    : null;
 
-  return outcomes.length > 0 ? outcomes : fallback;
+  return buildForecastPayload({
+    forecast,
+    aiCommentary
+  });
 }
 
-/**
- * Zod schema is intentionally flexible / passthrough,
- * so parsed.state may have optional fields.
- *
- * estimateForecast() requires a complete MarketState.
- * This function fills missing fields from persisted state/default state.
- */
-function normalizeMarketState(
-  value: unknown,
-  fallback: MarketState
-): MarketState {
-  const record = isRecord(value) ? value : {};
-
-  const outcomes = normalizeOutcomes(record.outcomes, fallback.outcomes);
-
-  const normalized: MarketState = {
-    ...fallback,
-    ...record,
-
-    useAI:
-      typeof record.useAI === "boolean" ? record.useAI : fallback.useAI,
-
-    outcomes,
-
-    manualMaxOverrideC: toNullableNumber(
-      record.manualMaxOverrideC,
-      fallback.manualMaxOverrideC ?? null
-    ),
-
-    rainEtaMinutes: toNullableNonNegativeInt(
-      record.rainEtaMinutes,
-      fallback.rainEtaMinutes ?? null
-    ),
-
-    cloudCoverPct: toCloudCover(
-      record.cloudCoverPct,
-      fallback.cloudCoverPct
-    ),
-
-    rainProbability60m: toProbability(
-      record.rainProbability60m,
-      fallback.rainProbability60m
-    ),
-
-    rainProbability120m: toProbability(
-      record.rainProbability120m,
-      fallback.rainProbability120m
-    ),
-
-    expectedRainIntensity: toRainIntensity(
-      record.expectedRainIntensity,
-      fallback.expectedRainIntensity
-    )
-  };
-
-  return normalized;
-}
-
-function getHktDateCompact() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Hong_Kong",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(new Date());
-
-  const year = parts.find((part) => part.type === "year")?.value ?? "";
-  const month = parts.find((part) => part.type === "month")?.value ?? "";
-  const day = parts.find((part) => part.type === "day")?.value ?? "";
-
-  return `${year}${month}${day}`;
-}
-
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   try {
-    const body = await request.json();
-    const parsed = forecastApiRequestSchema.parse(body);
+    const url = new URL(request.url);
 
-    const persistedState = await getMarketState();
+    /*
+      Defaults:
+      - includeClob true because Phase 2 is multi-channel.
+      - blendMarket true because final probability should use CLOB/Gamma when available.
+      - ai false by default to avoid spending Poe credits on every dashboard refresh.
+    */
+    const includeClob = parseBoolean(url.searchParams.get("includeClob"), true);
+    const blendMarket = parseBoolean(url.searchParams.get("blendMarket"), true);
+    const debug = parseBoolean(url.searchParams.get("debug"), false);
+    const ai =
+      parseBoolean(url.searchParams.get("ai"), false) ||
+      parseBoolean(url.searchParams.get("explain"), false);
 
-    const state = normalizeMarketState(
-      parsed.state,
-      persistedState.state
-    );
+    const marketWeightOverride = parseNumber(url.searchParams.get("marketWeight"));
 
-    const snapshot = await getHkoWeatherSnapshot();
+    const payload = await runForecast({
+      includeClob,
+      blendMarket,
+      includeRawSnapshot: debug,
+      marketWeightOverride,
+      ai
+    });
 
-    const forecastWithoutAI = estimateForecast(snapshot, state);
-
-    let aiExplanation: string | null = null;
-
-    const shouldUseAI = parsed.forceAI ?? state.useAI;
-
-    if (shouldUseAI) {
-      aiExplanation = await generatePoeExplanation({
-        snapshot,
-        state,
-        forecast: forecastWithoutAI
-      });
-    }
-
-    const result: ForecastResult = {
-      ...forecastWithoutAI,
-      aiExplanation
-    };
-
-    let historySave: HistorySaveResult = {
-      saved: false,
-      reason: "saveHistory was false."
-    };
-
-    if (parsed.saveHistory) {
-      const hktDate =
-        typeof result.hktDate === "string" && result.hktDate.length > 0
-          ? result.hktDate
-          : getHktDateCompact();
-
-      historySave = await saveForecastRun({
-        hktDate,
-        state,
-        weather: snapshot,
-        result
-      });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      data: {
-        result,
-        weather: snapshot,
-        historySave
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "no-store, max-age=0"
       }
     });
   } catch (error) {
@@ -305,9 +128,67 @@ export async function POST(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to generate forecast."
+            : "Failed to generate multi-channel forecast."
       },
-      { status: 500 }
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, max-age=0"
+        }
+      }
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    let body: Record<string, unknown> = {};
+
+    try {
+      const parsed = await request.json();
+      body = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      body = {};
+    }
+
+    const includeClob = parseBoolean(body.includeClob, true);
+    const blendMarket = parseBoolean(body.blendMarket, true);
+    const debug = parseBoolean(body.debug, false);
+    const ai = parseBoolean(body.ai ?? body.explain, false);
+    const marketWeightOverride = parseNumber(body.marketWeight);
+
+    const payload = await runForecast({
+      includeClob,
+      blendMarket,
+      includeRawSnapshot: debug,
+      marketWeightOverride,
+      ai
+    });
+
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "no-store, max-age=0"
+      }
+    });
+  } catch (error) {
+    console.error("Forecast API POST error:", error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to generate multi-channel forecast."
+      },
+      {
+        status: 500,
+        headers: {
+          "Cache-Control": "no-store, max-age=0"
+        }
+      }
     );
   }
 }
