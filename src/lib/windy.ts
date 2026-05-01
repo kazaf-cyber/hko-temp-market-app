@@ -105,19 +105,30 @@ export async function getWindyForecast(): Promise<WindyForecast> {
   };
 
   const response = await fetch("https://api.windy.com/api/point-forecast/v2", {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json"
-    },
-    body: JSON.stringify(body)
-  });
+  method: "POST",
+  cache: "no-store",
+  headers: {
+    "Content-Type": "application/json",
+    Accept: "application/json"
+  },
+  body: JSON.stringify(body)
+});
 
-  if (!response.ok) {
-    throw new Error(
-      `Windy request failed: ${response.status} ${response.statusText}`
-    );
+if (!response.ok) {
+  const errorText = await response.text().catch(() => "");
+
+  throw new Error(
+    [
+      `Windy request failed: ${response.status} ${response.statusText}`,
+      errorText ? `Response body: ${errorText.slice(0, 500)}` : null,
+      `Request model: ${body.model}`,
+      `Request parameters: ${body.parameters.join(",")}`,
+      `Has key: ${Boolean(key)}`
+    ]
+      .filter(Boolean)
+      .join(" | ")
+  );
+}
   }
 
   const raw = (await response.json()) as WindyRaw;
