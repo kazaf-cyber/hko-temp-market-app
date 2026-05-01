@@ -43,10 +43,10 @@ type ForecastResponse = {
   data?: {
     result: ForecastResult;
     weather: HkoWeatherSnapshot;
-    historySave: {
-      saved: boolean;
-      reason: string | null;
-    };
+    historySave?: {
+  saved: boolean;
+  reason: string | null;
+   } | null;
   };
   error?: string;
 };
@@ -367,11 +367,21 @@ export default function HomePage() {
         await loadHistory();
       }
 
-      setMessage(
-        json.data.historySave.saved
-          ? "Forecast generated and saved to history."
-          : `Forecast generated. ${json.data.historySave.reason}`
-      );
+      const historySave = json.data.historySave ?? null;
+
+let nextMessage = "Forecast generated.";
+
+if (saveHistory) {
+  if (historySave?.saved) {
+    nextMessage = "Forecast generated and saved to history.";
+  } else if (historySave?.reason) {
+    nextMessage = `Forecast generated. ${historySave.reason}`;
+  } else {
+    nextMessage = "Forecast generated. History save status unavailable.";
+  }
+}
+
+setMessage(nextMessage);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown forecast error.");
     } finally {
