@@ -1206,26 +1206,12 @@ function buildWeatherForDisplay(params: {
       Main observed lower-bound aliases.
     */
     observedMaxLowerBoundC: maxSoFarC,
+    observedMaxLowerBoundSource: maxSoFarSource,
     observedFinalMaxLowerBoundC: maxSoFarC,
-
-    /*
-      HKO display aliases.
-    */
-    hkoCurrentTempC,
-    hkoMaxSinceMidnightC,
-
-    hko: {
-      ...recordOrEmpty(forecastRecord.hko),
-      currentTempC: hkoCurrentTempC,
-      hkoCurrentTempC,
-      maxSinceMidnightC: hkoMaxSinceMidnightC,
-      hkoMaxSinceMidnightC,
-      observedMaxLowerBoundC: maxSoFarC,
-      observedFinalMaxLowerBoundC: maxSoFarC
-    },
-    
+    observedFinalMaxLowerBoundSource: maxSoFarSource,
     observedMaxSoFarC: maxSoFarC,
     observedMaxSoFarSource: maxSoFarSource,
+
   
 
     /*
@@ -1253,6 +1239,7 @@ function buildWeatherForDisplay(params: {
     },
 
     hko: {
+      ...recordOrEmpty(forecastRecord.hko),
       ...hkoRecord,
       currentTempC: displayCurrentTempC,
       hkoCurrentTempC: displayCurrentTempC,
@@ -1848,13 +1835,7 @@ function normalizeForecastResultForPage(
     maxSoFarSource
   });
   
-  const hkoCurrentTempC = firstNumber(
-    forecastRecord.hkoCurrentTempC,
-    forecastRecord.currentTempC,
-    forecastRecord.currentTemperatureC,
-    getAt(forecastRecord, ["hko", "currentTempC"]),
-    getAt(forecastRecord, ["hko", "hkoCurrentTempC"]),
-
+ const hkoCurrentTempC = firstNumber(
     getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]),
     getAt(weatherForDisplay, ["current", "currentTempC"]),
     getAt(weatherForDisplay, ["current", "currentTemperatureC"]),
@@ -1867,7 +1848,13 @@ function normalizeForecastResultForPage(
     getAt(weatherForDisplay, ["temperatureC"]),
 
     getAt(weatherForDisplay, ["hko", "currentTempC"]),
-    getAt(weatherForDisplay, ["hko", "hkoCurrentTempC"])
+    getAt(weatherForDisplay, ["hko", "hkoCurrentTempC"]),
+
+    forecastRecord.hkoCurrentTempC,
+    forecastRecord.currentTempC,
+    forecastRecord.currentTemperatureC,
+    getAt(forecastRecord, ["hko", "currentTempC"]),
+    getAt(forecastRecord, ["hko", "hkoCurrentTempC"])
   );
 
   const hkoMaxSinceMidnightC = firstNumber(
@@ -1893,25 +1880,6 @@ function normalizeForecastResultForPage(
     forecastRecord.observedMaxLowerBoundC,
     forecastRecord.observedFinalMaxLowerBoundC,
 
-    maxSoFarC
-  );
-  
- const hkoCurrentTempC = firstNumber(
-    getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]),
-    getAt(weatherForDisplay, ["current", "currentTempC"]),
-    getAt(weatherForDisplay, ["hkoCurrentTempC"]),
-    getAt(weatherForDisplay, ["currentTempC"]),
-    getAt(weatherForDisplay, ["hko", "currentTempC"]),
-    getAt(weatherForDisplay, ["hko", "hkoCurrentTempC"])
-  );
-
-  const hkoMaxSinceMidnightC = firstNumber(
-    getAt(weatherForDisplay, ["sinceMidnight", "maxTempC"]),
-    getAt(weatherForDisplay, ["sinceMidnight", "maxTemperatureC"]),
-    getAt(weatherForDisplay, ["hkoMaxSinceMidnightC"]),
-    getAt(weatherForDisplay, ["maxSinceMidnightC"]),
-    getAt(weatherForDisplay, ["hko", "maxSinceMidnightC"]),
-    getAt(weatherForDisplay, ["hko", "hkoMaxSinceMidnightC"]),
     maxSoFarC
   );
   const calculatedTopOutcome =
@@ -1984,10 +1952,29 @@ function normalizeForecastResultForPage(
     estimatedFinalMaxC,
     maxSoFarC,
     maxSoFarSource,
+
     observedMaxSoFarC: maxSoFarC,
     observedMaxSoFarSource: maxSoFarSource,
+
+    observedMaxLowerBoundC: maxSoFarC,
+    observedMaxLowerBoundSource: maxSoFarSource,
     observedFinalMaxLowerBoundC: maxSoFarC,
     observedFinalMaxLowerBoundSource: maxSoFarSource,
+
+    hkoCurrentTempC,
+    hkoMaxSinceMidnightC,
+
+    hko: {
+      ...recordOrEmpty(forecastRecord.hko),
+      ...recordOrEmpty(getAt(weatherForDisplay, ["hko"])),
+      currentTempC: hkoCurrentTempC,
+      hkoCurrentTempC,
+      maxSinceMidnightC: hkoMaxSinceMidnightC,
+      hkoMaxSinceMidnightC,
+      observedMaxLowerBoundC: maxSoFarC,
+      observedFinalMaxLowerBoundC: maxSoFarC
+    },
+
     aiExplanation,
     keyDrivers,
     warnings,
