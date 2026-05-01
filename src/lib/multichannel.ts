@@ -112,22 +112,34 @@ function deriveSignals(params: {
       gammaPrice: item.gammaPrice
     })) ?? [];
 
-  return {
-    hkoCurrentTempC: params.hko.current.hkoCurrentTempC ?? null,
-    hkoMaxSoFarC: params.hko.sinceMidnight?.maxTempC ?? null,
-    openMeteoCurrentTempC: params.openMeteo?.current?.temperature2mC ?? null,
+  const hkoCurrentTempC = params.hko.current.hkoCurrentTempC ?? null;
+const hkoMaxSoFarC =
+  params.hko.sinceMidnight?.maxTempC ?? hkoCurrentTempC;
+
+return {
+  hkoCurrentTempC,
+  hkoMaxSoFarC,
+  openMeteoCurrentTempC: params.openMeteo?.current?.temperature2mC ?? null,
+  openMeteoFutureMaxC,
+  windyFutureMaxC,
+
+  /**
+   * Important:
+   * Future/daily max estimate must never ignore already observed HKO current temp.
+   * If since-midnight max feed is unavailable, fall back to HKO current temp.
+   */
+  multiModelFutureMaxC: maxNumber([
+    hkoMaxSoFarC,
+    hkoCurrentTempC,
     openMeteoFutureMaxC,
-    windyFutureMaxC,
-    multiModelFutureMaxC: maxNumber([
-      params.hko.sinceMidnight?.maxTempC,
-      openMeteoFutureMaxC,
-      windyFutureMaxC
-    ]),
-    rainProbabilityNext2hPct,
-    cloudCoverNowPct,
-    observedHourlyRainfallMm: params.hko.hourlyRainfall?.rainfallMm ?? null,
-    clobMidpoints
-  };
+    windyFutureMaxC
+  ]),
+
+  rainProbabilityNext2hPct,
+  cloudCoverNowPct,
+  observedHourlyRainfallMm: params.hko.hourlyRainfall?.rainfallMm ?? null,
+  clobMidpoints
+};
 }
 
 export async function getMultiChannelSnapshot(params?: {
