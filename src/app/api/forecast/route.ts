@@ -257,25 +257,44 @@ function buildForecastPayload(params: {
   /*
     Important compatibility layer.
 
-    Your frontend currently expects:
+    Different parts of the frontend may read the Poe explanation from
+    different locations, for example:
 
-      json.data.result
-      json.data.weather
-      json.data.historySave.saved
+      json.data.aiExplanation
+      json.data.result.aiExplanation
+      json.data.forecast.aiExplanation
+      json.aiExplanation
+      json.result.aiExplanation
 
-    So data must include:
-      - all forecast fields
-      - result
-      - forecast
-      - weather
-      - historySave
-      - ai
+    So we attach aiExplanation to all common response shapes.
   */
+  const aiExplanation = getAiExplanationText(params.aiCommentary);
+
+  const resultForDisplay = {
+    ...(params.forecast as unknown as ForecastResult),
+    ...(aiExplanation ? { aiExplanation } : {})
+  } as ForecastResult;
+
   const data = {
-    ...params.forecast,
-    result: params.forecast,
-    forecast: params.forecast,
+    ...resultForDisplay,
+
+    /*
+      Main aliases expected by the current frontend.
+    */
+    result: resultForDisplay,
+    forecast: resultForDisplay,
+    weather: params.forecast.weather,
+
+    /*
+      Poe AI aliases.
+    */
     ai: params.aiCommentary,
+    aiCommentary: params.aiCommentary,
+    aiExplanation,
+
+    /*
+      History save status.
+    */
     historySave: params.historySave
   };
 
@@ -284,21 +303,31 @@ function buildForecastPayload(params: {
     generatedAt: params.forecast.generatedAt,
 
     /*
-      Main response shape used by the current page.tsx.
+      Main response shape used by page.tsx.
     */
     data,
 
     /*
-      AI commentary, if requested.
+      Top-level aliases for compatibility.
     */
-    ai: params.aiCommentary,
+    forecast: resultForDisplay,
+    result: resultForDisplay,
 
     /*
-      Backward-friendly aliases for older UI code.
+      Poe AI top-level aliases.
     */
-    forecast: params.forecast,
-    result: params.forecast,
+    ai: params.aiCommentary,
+    aiCommentary: params.aiCommentary,
+    aiExplanation,
+
+    /*
+      History save top-level alias.
+    */
     historySave: params.historySave,
+
+    /*
+      Existing forecast fields.
+    */
     outcomes: params.forecast.outcomes,
     probabilities: params.forecast.outcomes.map((outcome) => ({
       name: outcome.name,
