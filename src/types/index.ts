@@ -6,26 +6,48 @@ export type RainIntensity =
   | "violent"
   | "thunderstorm";
 
+export type HkoRainfallRow = {
+  place?: string | null;
+  max?: number | null;
+  unit?: string | null;
+
+  [key: string]: unknown;
+};
+
 export type HkoCurrent = {
-  hkoCurrentTempC?: number | null;
+  updateTime?: string | null;
   recordTime?: string | null;
+
+  hkoCurrentTempC?: number | null;
+  hkoHumidityPct?: number | null;
+
+  rainfall?: HkoRainfallRow[];
 
   [key: string]: unknown;
 };
 
 export type HkoSinceMidnight = {
+  stationName?: string | null;
+
   maxTempC?: number | null;
   maxTempTime?: string | null;
 
   minTempC?: number | null;
   minTempTime?: string | null;
 
+  source?: string | null;
+  sourceUpdatedAt?: string | null;
+
   [key: string]: unknown;
 };
 
 export type HkoHourlyRainfall = {
-  rainfallMm?: number | null;
   obsTime?: string | null;
+  stationName?: string | null;
+
+  rainfallMm?: number | null;
+  unit?: string | null;
+  warning?: string | null;
 
   [key: string]: unknown;
 };
@@ -51,7 +73,7 @@ export type HkoForecastDay = {
   PSR?: string | null;
 
   /**
-   * Your page.tsx reads lowercase psr.
+   * Some app UI reads lowercase psr.
    * Keep both to avoid casing mismatch.
    */
   psr?: string | null;
@@ -60,7 +82,12 @@ export type HkoForecastDay = {
 };
 
 export type HkoForecast = {
+  /**
+   * Required because getHkoWeatherSnapshot() should always return
+   * a forecast object. If no forecast rows exist, use an empty array.
+   */
   days: HkoForecastDay[];
+
   updateTime?: string | null;
   generalSituation?: string | null;
 
@@ -135,6 +162,31 @@ export type OutcomeRange = {
 
 export type MarketOutcome = OutcomeRange;
 
+export type ForecastOutcomeProbability = {
+  name: string;
+
+  /**
+   * Forecast model probability.
+   * Example: 0.57 means 57%.
+   */
+  probability: number;
+
+  /**
+   * Optional range metadata.
+   */
+  lower?: number | null;
+  upper?: number | null;
+
+  /**
+   * Optional market comparison fields.
+   */
+  marketPrice?: number | null;
+  polymarketProbability?: number | null;
+  edge?: number | null;
+
+  [key: string]: unknown;
+};
+
 export type OutcomeProbability = ForecastOutcomeProbability;
 
 export type EstimatedFinalMaxC = {
@@ -148,6 +200,7 @@ export type EstimatedFinalMaxC = {
 };
 
 export type ForecastPercentiles = EstimatedFinalMaxC;
+
 /**
  * Keep this flexible because API routes / AI wrappers / DB history
  * may not always return every UI field.
@@ -158,8 +211,14 @@ export type ForecastResult = {
 
   generatedAt?: string | null;
 
+  hkoCurrentTempC?: number | null;
+  autoMaxSoFarC?: number | null;
+
   maxSoFarC?: number | null;
   maxSoFarSource?: string | null;
+
+  officialForecastMaxC?: number | null;
+  observedHourlyRainfallMm?: number | null;
 
   estimatedFinalMaxC?: EstimatedFinalMaxC | null;
   outcomeProbabilities?: ForecastOutcomeProbability[] | null;
@@ -186,7 +245,12 @@ export type SettlementResult = {
   targetDate?: string | null;
 
   date?: string | null;
+  stationCode?: string | null;
+  stationName?: string | null;
+
   officialMaxTempC?: number | null;
+  officialMinTempC?: number | null;
+
   available?: boolean | null;
 
   rawKey?: string | null;
@@ -202,6 +266,7 @@ export type SettlementResult = {
   pnl?: number | null;
 
   outcome?: string | null;
+  winningOutcome?: string | null;
   reason?: string | null;
 
   [key: string]: unknown;
@@ -221,6 +286,12 @@ export type MarketState = {
 
   expectedRainIntensity: RainIntensity;
 
+  /**
+   * Optional app/admin fields.
+   */
+  stationCode?: "HKO" | string;
+  stationName?: string;
+
   balance?: number;
   cash?: number;
   position?: number;
@@ -232,7 +303,12 @@ export type MarketState = {
   [key: string]: unknown;
 };
 
+/**
+ * Compatibility aliases for older imports used across the app.
+ */
 export type WeatherSnapshot = HkoWeatherSnapshot;
 export type HkoSinceMidnightMaxMin = HkoSinceMidnight;
+export type HkoMaxMinSinceMidnight = HkoSinceMidnight;
 export type HkoCurrentWeather = HkoCurrent;
-
+export type HkoForecast9Day = HkoForecast;
+export type HkoForecastSnapshot = HkoForecast;
