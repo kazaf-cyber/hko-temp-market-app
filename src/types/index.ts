@@ -99,22 +99,41 @@ export type OutcomeRange = {
   lower: number | null;
   upper: number | null;
 
+  /**
+   * Main market probability shown in UI.
+   * Prefer CLOB midpoint. Fall back to Gamma YES price.
+   */
   marketPrice?: number | null;
   price?: number | null;
+  marketPriceSource?: string | null;
 
+  /**
+   * Gamma binary market prices.
+   */
+  yesPrice?: number | null;
+  noPrice?: number | null;
+
+  /**
+   * Token IDs.
+   */
   tokenId?: string | null;
   clobTokenId?: string | null;
+  yesTokenId?: string | null;
+  noTokenId?: string | null;
+
+  /**
+   * CLOB-derived prices.
+   */
+  clobMidpoint?: number | null;
+  yesAsk?: number | null;
+  noAsk?: number | null;
+  yesBid?: number | null;
+  clobSpread?: number | null;
 
   [key: string]: unknown;
 };
 
 export type MarketOutcome = OutcomeRange;
-export type ForecastOutcomeProbability = {
-  name: string;
-  probability: number;
-
-  [key: string]: unknown;
-};
 
 export type OutcomeProbability = ForecastOutcomeProbability;
 
