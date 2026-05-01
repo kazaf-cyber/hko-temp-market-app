@@ -1436,7 +1436,722 @@ function stringArray(value: unknown): string[] | null {
   if (!Array.isArray(value)) {
     return null;
   }
+function warningStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
 
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item.trim();
+      }
+
+      if (isRecord(item)) {
+        return firstString(
+          item.message,
+          item.error,
+          item.reason,
+          item.warning,
+          item.text,
+          item.detail,
+          item.source
+        );
+      }
+
+      return null;
+    })
+    .filter((item): item is string => Boolean(item));
+}
+
+function addWarning(warnings: string[], warning: string | null) {
+  if (!warning) {
+    return;
+  }
+
+  const trimmed = warning.trim();
+
+  if (!trimmed) {
+    return;
+  }
+
+  if (!warnings.includes(trimmed)) {
+    warnings.push(trimmed);
+  }
+}
+
+function sourceStatusWarning(
+  sourceName: string,
+  value: unknown
+): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+
+    if (
+      normalized.includes("fail") ||
+      normalized.includes("error") ||
+      normalized.includes("invalid") ||
+      normalized.includes("unavailable") ||
+      normalized.includes("disabled") ||
+      normalized.includes("400") ||
+      normalized.includes("401") ||
+      normalized.includes("403")
+    ) {
+      return `${sourceName}: ${value}`;
+    }
+
+    return null;
+  }
+
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const status = firstString(
+    value.status,
+    value.state,
+    value.result,
+    value.sourceStatus
+  );
+
+  const error = firstString(
+    value.error,
+    value.message,
+    value.reason,
+    value.statusText,
+    value.detail,
+    value.details
+  );
+
+  const ok = firstBoolean(value.ok, value.success, value.enabled);
+
+  const normalizedStatus = status?.toLowerCase() ?? "";
+
+  const failed =
+    ok === false ||
+    [
+      "failed",
+      "fail",
+      "error",
+      "invalid",
+      "unavailable",
+      "disabled",
+      "missing",
+      "not_available",
+      "not available"
+    ].includes(normalizedStatus) ||
+    Boolean(
+      error &&
+        /fail|error|invalid|unavailable|disabled|400|401|403/i.test(error)
+    );
+
+  if (!failed) {
+    return null;
+  }
+
+  return `${sourceName}: ${error ?? status ?? "source unavailable"}`;
+}
+
+function buildSourceStatus(params: {
+  forecastRecord: Record<string, unknown>;
+  weatherForDisplay: Record<string, unknown>;
+}): Record<string, unknown> {
+  const { forecastRecord, weatherForDisplay } = params;
+
+  const diagnosticsRecord = recordOrEmpty(forecastRecord.diagnostics);
+  const diagnosticsSourceStatus = recordOrEmpty(diagnosticsRecord.sourceStatus);
+  const diagnosticsSources = recordOrEmpty(diagnosticsRecord.sources);
+  const weatherSourceDiagnostics = recordOrEmpty(
+    getAt(weatherForDisplay, ["sourceDiagnostics"])
+  );
+
+  return {
+    ...diagnosticsSourceStatus,
+
+    hko:
+      firstRecord(
+        diagnosticsSourceStatus.hko,
+        diagnosticsSources.hko,
+        weatherSourceDiagnostics.hko,
+        getAt(weatherForDisplay, ["hko"]),
+        getAt(forecastRecord, ["hko"])
+      ) ?? null,
+
+    openMeteo:
+      firstRecord(
+        diagnosticsSourceStatus.openMeteo,
+        diagnosticsSourceStatus.open_meteo,
+        diagnosticsSources.openMeteo,
+        diagnosticsSources.open_meteo,
+        weatherSourceDiagnostics.openMeteo,
+        weatherSourceDiagnostics.open_meteo,
+        getAt(weatherForDisplay, ["openMeteo"]),
+        getAt(weatherForDisplay, ["open_meteo"]),
+        getAt(forecastRecord, ["openMeteo"]),
+        getAt(forecastRecord, ["open_meteo"])
+      ) ?? null,
+
+    windy:
+      firstRecord(
+        diagnosticsSourceStatus.windy,
+        diagnosticsSources.windy,
+        weatherSourceDiagnostics.windy,
+        getAt(weatherForDisplay, ["windy"]),
+        getAt(forecastRecord, ["windy"]),
+        getAt(forecastRecord, ["weather", "windy"])
+      ) ?? null,
+
+    gamma:
+      firstRecord(
+        diagnosticsSourceStatus.gamma,
+        diagnosticsSourceStatus.polymarketGamma,
+        diagnosticsSourceStatus.polymarket_gamma,
+        diagnosticsSources.gamma,
+        diagnosticsSources.polymarketGamma,
+        getAt(forecastRecord, ["market", "gamma"]),
+        getAt(forecastRecord, ["polymarket", "gamma"]),
+        getAt(forecastRecord, ["gamma"])
+      ) ?? null,
+
+    clob:
+      firstRecord(
+        diagnosticsSourceStatus.clob,
+        diagnosticsSourceStatus.polymarketClob,
+        diagnosticsSourceStatus.polymarket_clob,
+        diagnosticsSources.clob,
+        diagnosticsSources.polymarketClob,
+        getAt(forecastRecord, ["market", "clob"]),
+        getAt(forecastRecord, ["polymarket", "clob"]),
+        getAt(forecastRecord, ["clob"])
+      ) ?? null
+  };
+}
+
+function collectWarnings(params: {
+  forecastRecord: Record<string, unknown>;
+  weatherForDisplay: Record<string, unknown>;
+  sourceStatus: Record<string, unknown>;
+}): string[] {
+  const { forecastRecord, weatherForDisplay, sourceStatus } = params;
+
+  const diagnosticsRecord = recordOrEmpty(forecastRecord.diagnostics);
+  const summaryRecord = recordOrEmpty(forecastRecord.summary);
+
+  const warnings: string[] = [];
+
+  for (const warning of [
+    ...warningStrings(forecastRecord.warnings),
+    ...warningStrings(summaryRecord.warnings),
+    ...warningStrings(diagnosticsRecord.warnings),
+    ...warningStrings(getAt(weatherForDisplay, ["warnings"]))
+  ]) {
+    addWarning(warnings, warning);
+  }
+
+  addWarning(warnings, sourceStatusWarning("HKO", sourceStatus.hko));
+  addWarning(warnings, sourceStatusWarning("Open-Meteo", sourceStatus.openMeteo));
+  addWarning(warnings, sourceStatusWarning("Windy", sourceStatus.windy));
+  addWarning(warnings, sourceStatusWarning("Polymarket Gamma", sourceStatus.gamma));
+  addWarning(warnings, sourceStatusWarning("Polymarket CLOB", sourceStatus.clob));
+
+  for (const [sourceName, paths] of Object.entries({
+    Windy: [
+      ["windyError"],
+      ["windy", "error"],
+      ["weather", "windyError"],
+      ["weather", "windy", "error"],
+      ["diagnostics", "windyError"],
+      ["diagnostics", "windy", "error"],
+      ["diagnostics", "sourceDiagnostics", "windy", "error"]
+    ],
+    "Polymarket CLOB": [
+      ["clobError"],
+      ["clob", "error"],
+      ["market", "clobError"],
+      ["market", "clob", "error"],
+      ["polymarket", "clob", "error"],
+      ["diagnostics", "clobError"],
+      ["diagnostics", "clob", "error"],
+      ["diagnostics", "sourceDiagnostics", "clob", "error"]
+    ],
+    "Polymarket Gamma": [
+      ["gammaError"],
+      ["gamma", "error"],
+      ["market", "gammaError"],
+      ["market", "gamma", "error"],
+      ["polymarket", "gamma", "error"],
+      ["diagnostics", "gammaError"],
+      ["diagnostics", "gamma", "error"],
+      ["diagnostics", "sourceDiagnostics", "gamma", "error"]
+    ],
+    "Open-Meteo": [
+      ["openMeteoError"],
+      ["open_meteo_error"],
+      ["openMeteo", "error"],
+      ["open_meteo", "error"],
+      ["weather", "openMeteo", "error"],
+      ["weather", "open_meteo", "error"],
+      ["diagnostics", "openMeteoError"],
+      ["diagnostics", "open_meteo_error"],
+      ["diagnostics", "sourceDiagnostics", "openMeteo", "error"]
+    ]
+  })) {
+    for (const path of paths) {
+      const message = firstString(getAt(forecastRecord, path));
++
++      if (message) {
++        addWarning(warnings, `${sourceName}: ${message}`);
++      }
++    }
++  }
++
++  const marketBlendEnabled = firstBoolean(
++    forecastRecord.marketBlendEnabled,
++    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
++    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"])
++  );
++
++  if (marketBlendEnabled === false) {
++    addWarning(
++      warnings,
++      "Market blending is disabled or unavailable; final probabilities may be weather-only or fallback-normalized."
++    );
++  }
++
++  return warnings;
++}
++
++function getStateOutcomeRows(state: MarketState | null | undefined): unknown[] {
++  if (!state) {
++    return [];
++  }
++
++  const stateRecord = recordOrEmpty(state);
++
++  const candidates = [
++    stateRecord.outcomes,
++    stateRecord.probabilities,
++    stateRecord.outcomeProbabilities,
++    getAt(stateRecord, ["market", "outcomes"]),
++    getAt(stateRecord, ["market", "probabilities"]),
++    getAt(stateRecord, ["polymarket", "outcomes"]),
++    getAt(stateRecord, ["polymarket", "probabilities"])
++  ];
++
++  for (const candidate of candidates) {
++    if (Array.isArray(candidate) && candidate.length > 0) {
++      return candidate;
++    }
++  }
++
++  return [];
++}
++
++function getForecastOutcomeRows(forecastRecord: Record<string, unknown>): unknown[] {
++  /*
++    Prefer the forecast engine's explicit probability rows over raw outcomes.
++    Raw outcomes often contain only labels/prices.
++  */
++  if (Array.isArray(forecastRecord.outcomeProbabilities)) {
++    return forecastRecord.outcomeProbabilities;
++  }
++
++  if (Array.isArray(forecastRecord.probabilities)) {
++    return forecastRecord.probabilities;
++  }
++
++  if (Array.isArray(forecastRecord.outcomes)) {
++    return forecastRecord.outcomes;
++  }
++
++  return [];
++}
++
++function normalizeOutcomeNameKey(value: unknown): string {
++  return String(value ?? "")
++    .trim()
++    .toLowerCase()
++    .replace(/℃/g, "°c")
++    .replace(/\s+/g, " ")
++    .replace(/[^a-z0-9°+\-. ]/g, "");
++}
++
++function outcomeNameKey(row: Record<string, unknown>): string | null {
++  const name = firstString(row.name, row.outcome, row.label, row.title);
++
++  if (!name) {
++    return null;
++  }
++
++  const key = normalizeOutcomeNameKey(name);
++
++  return key ? `name:${key}` : null;
++}
++
++function outcomeRangeKey(row: Record<string, unknown>): string | null {
++  const range = getOutcomeRange(row);
++
++  if (range.lower === null && range.upper === null) {
++    return null;
++  }
++
++  return `range:${range.lower ?? ""}:${range.upper ?? ""}`;
++}
++
++function mergeStateOutcomeWithForecastOutcome(params: {
++  stateRow: Record<string, unknown>;
++  forecastRow: Record<string, unknown> | null;
++}): Record<string, unknown> {
++  const { stateRow, forecastRow } = params;
++
++  if (!forecastRow) {
++    return {
++      ...stateRow,
++      outcomeUniverseSource: "state.outcomes",
++      forecastOutcomeMatched: false
++    };
++  }
++
++  /*
++    Start with forecast row so source/model fields exist, then overlay state row
++    because Admin state is the outcome universe source of truth.
++  */
++  const merged: Record<string, unknown> = {
++    ...forecastRow,
++    ...stateRow,
++    outcomeUniverseSource: "state.outcomes",
++    forecastOutcomeMatched: true
++  };
++
++  /*
++    But probability fields from the engine should not be overwritten by Admin
++    price-only state rows.
++  */
++  for (const key of [
++    "probability",
++    "probabilityPct",
++    "modelProbability",
++    "modelProbabilityPct",
++    "weatherProbability",
++    "weatherProbabilityPct",
++    "weatherFairProbability",
++    "weatherFairProbabilityPct",
++    "forecastProbability",
++    "forecastProbabilityPct",
++    "finalProbability",
++    "finalProbabilityPct",
++    "blendedProbability",
++    "blendedProbabilityPct"
++  ]) {
++    if (forecastRow[key] !== undefined) {
++      merged[key] = forecastRow[key];
++    }
++  }
++
++  const stateName = firstString(
++    stateRow.name,
++    stateRow.outcome,
++    stateRow.label,
++    stateRow.title
++  );
++
++  if (stateName) {
++    merged.name = stateName;
++  }
++
++  const stateRange = getOutcomeRange(stateRow);
++
++  if (stateRange.lower !== null) {
++    merged.lower = stateRange.lower;
++  }
++
++  if (stateRange.upper !== null) {
++    merged.upper = stateRange.upper;
++  }
++
++  return merged;
++}
++
++function buildRawOutcomeRows(params: {
++  forecastRecord: Record<string, unknown>;
++  state: MarketState | null | undefined;
++}): {
++  rows: unknown[];
++  source: string;
++} {
++  const forecastRows = getForecastOutcomeRows(params.forecastRecord).map(
++    (row) => recordOrEmpty(row)
++  );
++
++  const stateRows = getStateOutcomeRows(params.state).map((row) =>
++    recordOrEmpty(row)
++  );
++
++  if (!stateRows.length) {
++    return {
++      rows: forecastRows,
++      source:
++        Array.isArray(params.forecastRecord.outcomeProbabilities)
++          ? "forecast.outcomeProbabilities"
++          : Array.isArray(params.forecastRecord.probabilities)
++            ? "forecast.probabilities"
++            : Array.isArray(params.forecastRecord.outcomes)
++              ? "forecast.outcomes"
++              : "none"
++    };
++  }
++
++  const usedForecastIndexes = new Set<number>();
++
++  const rows = stateRows.map((stateRow, index) => {
++    const stateNameKey = outcomeNameKey(stateRow);
++    const stateRangeKey = outcomeRangeKey(stateRow);
++
++    let matchIndex = forecastRows.findIndex((forecastRow, forecastIndex) => {
++      if (usedForecastIndexes.has(forecastIndex)) {
++        return false;
++      }
++
++      return (
++        (stateNameKey !== null && outcomeNameKey(forecastRow) === stateNameKey) ||
++        (stateRangeKey !== null && outcomeRangeKey(forecastRow) === stateRangeKey)
++      );
++    });
++
++    /*
++      Fallback by index if labels changed but the row count/order is the same.
++    */
++    if (
++      matchIndex < 0 &&
++      forecastRows.length === stateRows.length &&
++      !usedForecastIndexes.has(index)
++    ) {
++      matchIndex = index;
++    }
++
++    const forecastRow = matchIndex >= 0 ? forecastRows[matchIndex] : null;
++
++    if (matchIndex >= 0) {
++      usedForecastIndexes.add(matchIndex);
++    }
++
++    return mergeStateOutcomeWithForecastOutcome({
++      stateRow,
++      forecastRow
++    });
++  });
++
++  return {
++    rows,
++    source: "state.outcomes"
++  };
++}
++
++function getProbabilityContext(
++  forecastRecord: Record<string, unknown>
++): ProbabilityContext {
++  const explicitBlendEnabled = firstBoolean(
++    forecastRecord.marketBlendEnabled,
++    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
++    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"]),
++    getAt(forecastRecord, ["diagnostics", "marketBlend", "enabled"])
++  );
++
++  const marketBlendEnabled = explicitBlendEnabled ?? true;
++
++  const marketWeight =
++    firstProbability(
++      forecastRecord.marketWeight,
++      forecastRecord.marketWeightUsed,
++      getAt(forecastRecord, ["model", "marketWeight"]),
++      getAt(forecastRecord, ["model", "marketWeightUsed"]),
++      getAt(forecastRecord, ["diagnostics", "marketWeight"]),
++      getAt(forecastRecord, ["diagnostics", "marketWeightUsed"]),
++      getAt(forecastRecord, ["diagnostics", "marketBlend", "weight"])
++    ) ?? null;
++
++  return {
++    marketBlendEnabled,
++    marketWeight
++  };
++}
++
++function getDisplayConfidence(params: {
++  forecastRecord: Record<string, unknown>;
++  outcomeProbabilities: Record<string, unknown>[];
++  warnings: string[];
++}): number | null {
++  const explicitConfidence = firstProbability(
++    params.forecastRecord.confidence,
++    getAt(params.forecastRecord, ["summary", "confidence"]),
++    getAt(params.forecastRecord, ["model", "confidence"]),
++    getAt(params.forecastRecord, ["diagnostics", "confidence"])
++  );
++
++  if (explicitConfidence !== null) {
++    return roundProbability(explicitConfidence);
++  }
++
++  const hasWeatherProbability = params.outcomeProbabilities.some(
++    (row) =>
++      firstProbability(row.weatherProbability, row.weatherFairProbability) !== null
++  );
++
++  const hasMarketProbability = params.outcomeProbabilities.some(
++    (row) => getMarketProbabilityFromRow(row) !== null
++  );
++
++  const hasFinalProbability = params.outcomeProbabilities.some(
++    (row) =>
++      firstProbability(row.finalProbability, row.blendedProbability, row.probability) !==
++      null
++  );
++
++  if (!hasWeatherProbability && !hasMarketProbability && !hasFinalProbability) {
++    return null;
++  }
++
++  const warningPenalty = Math.min(0.25, params.warnings.length * 0.05);
++
++  const derived =
++    0.25 +
++    (hasWeatherProbability ? 0.25 : 0) +
++    (hasMarketProbability ? 0.25 : 0) +
++    (hasFinalProbability ? 0.15 : 0) -
++    warningPenalty;
++
++  return roundProbability(Math.max(0.1, Math.min(0.9, derived)));
++}
++
++function buildMultiChannelForecastJson(
++  result: ForecastResult
++): Record<string, unknown> {
++  const resultRecord = recordOrEmpty(result);
++  const weatherRecord = recordOrEmpty(resultRecord.weather);
++  const marketRecord = recordOrEmpty(resultRecord.market);
++  const polymarketRecord = recordOrEmpty(resultRecord.polymarket);
++  const diagnosticsRecord = recordOrEmpty(resultRecord.diagnostics);
++
++  const rows = Array.isArray(resultRecord.outcomeProbabilities)
++    ? resultRecord.outcomeProbabilities.map((row) => recordOrEmpty(row))
++    : [];
++
++  return {
++    schemaVersion: "phase2.multi_channel_forecast_json.v1",
++    generatedAt: resultRecord.generatedAt ?? null,
++    hktDate:
++      firstString(
++        resultRecord.hktDate,
++        resultRecord.forecastDate,
++        resultRecord.date
++      ) ?? null,
++
++    outcomeUniverse: rows.map((row) => ({
++      name: row.name ?? null,
++      lower: row.lower ?? null,
++      upper: row.upper ?? null
++    })),
++
++    weatherChannels: {
++      hko: {
++        currentTempC:
++          resultRecord.hkoCurrentTempC ??
++          getAt(weatherRecord, ["current", "hkoCurrentTempC"]) ??
++          getAt(weatherRecord, ["currentTempC"]) ??
++          null,
++        maxSoFarC:
++          resultRecord.maxSoFarC ??
++          resultRecord.observedMaxSoFarC ??
++          resultRecord.observedFinalMaxLowerBoundC ??
++          null,
++        maxSinceMidnightC:
++          resultRecord.hkoMaxSinceMidnightC ??
++          getAt(weatherRecord, ["sinceMidnight", "maxTempC"]) ??
++          getAt(weatherRecord, ["maxSinceMidnightC"]) ??
++          null
++      },
++      openMeteo:
++        firstRecord(
++          weatherRecord.openMeteo,
++          weatherRecord.open_meteo,
++          resultRecord.openMeteo,
++          resultRecord.open_meteo,
++          getAt(diagnosticsRecord, ["sourceStatus", "openMeteo"])
++        ) ?? null,
++      windy:
++        firstRecord(
++          weatherRecord.windy,
++          resultRecord.windy,
++          getAt(diagnosticsRecord, ["sourceStatus", "windy"])
++        ) ?? null,
++      rain: {
++        rainfallMm:
++          weatherRecord.rainfallMm ??
++          weatherRecord.rainfall ??
++          getAt(weatherRecord, ["rain", "rainfallMm"]) ??
++          null,
++        cloudCover:
++          weatherRecord.cloudCover ??
++          weatherRecord.cloudCoverPct ??
++          getAt(weatherRecord, ["cloud", "cover"]) ??
++          getAt(weatherRecord, ["cloud", "coverPct"]) ??
++          null,
++        rainProbability:
++          weatherRecord.rainProbability ??
++          weatherRecord.rainProbabilityPct ??
++          getAt(weatherRecord, ["rain", "probability"]) ??
++          getAt(weatherRecord, ["rain", "probabilityPct"]) ??
++          null
++      }
++    },
++
++    marketChannels: {
++      gamma:
++        firstRecord(
++          marketRecord.gamma,
++          polymarketRecord.gamma,
++          resultRecord.gamma,
++          getAt(diagnosticsRecord, ["sourceStatus", "gamma"])
++        ) ?? null,
++      clob:
++        firstRecord(
++          marketRecord.clob,
++          polymarketRecord.clob,
++          resultRecord.clob,
++          getAt(diagnosticsRecord, ["sourceStatus", "clob"])
++        ) ?? null
++    },
++
++    outcomeProbabilities: rows.map((row) => ({
++      name: row.name ?? null,
++      lower: row.lower ?? null,
++      upper: row.upper ?? null,
++      weatherProbability:
++        firstProbability(row.weatherProbability, row.weatherFairProbability) ?? null,
++      marketProbability: getMarketProbabilityFromRow(row),
++      finalProbability:
++        firstProbability(row.finalProbability, row.blendedProbability, row.probability) ??
++        null,
++      gammaProbability: getGammaProbabilityFromRow(row),
++      clobBestBid: row.clobBestBid ?? null,
++      clobBestAsk: row.clobBestAsk ?? null,
++      clobMidpoint: row.clobMidpoint ?? null,
++      clobSpread: row.clobSpread ?? null,
++      edge: row.edge ?? null,
++      finalEdge: row.finalEdge ?? null
++    })),
++
++    topOutcome: resultRecord.topOutcome ?? null,
++    confidence: resultRecord.confidence ?? null,
++    diagnostics: resultRecord.diagnostics ?? null,
++    warnings: resultRecord.warnings ?? [],
++    diagnostics: diagnosticsRecord
++  };
++}
   return value.filter(
     (item): item is string => typeof item === "string" && item.trim() !== ""
   );
@@ -1565,7 +2280,8 @@ function getAiExplanationText(aiCommentary: unknown): string | null {
 
 function normalizeOutcomeForPage(
   value: unknown,
-  index: number
+  index: number,
+  probabilityContext: ProbabilityContext
 ): Record<string, unknown> {
   const row = recordOrEmpty(value);
 
@@ -1595,33 +2311,112 @@ function normalizeOutcomeForPage(
       getAt(row, ["range", "to"])
     ) ?? parsedRange.upper;
 
-  /*
-    IMPORTANT:
-    page.tsx expects forecast.outcomeProbabilities[].probability to be
-    model/weather probability in 0..1 format.
-
-    Prefer model/weather fields first. Only fall back to generic probability.
-  */
-  const modelProbability = firstProbability(
-    row.weatherProbability,
-    row.modelProbability,
-    row.forecastProbability,
-    row.weatherProbabilityPct,
-    row.modelProbabilityPct,
-    row.forecastProbabilityPct,
-    getAt(row, ["model", "probability"]),
-    getAt(row, ["model", "probabilityPct"]),
-    getAt(row, ["model", "weatherProbability"]),
-    getAt(row, ["model", "weatherProbabilityPct"]),
-    row.probability,
-    row.probabilityPct
-  );
-
+  const clob = getClobBidAskFromRow(row);
+  const gammaProbability = getGammaProbabilityFromRow(row);
   const marketProbability = getMarketProbabilityFromRow(row);
 
+  const explicitWeatherProbability = firstProbability(
+    row.weatherFairProbability,
+    row.weatherProbability,
+    row.unblendedWeatherProbability,
+    row.weatherModelProbability,
+    row.rawWeatherProbability,
+    getAt(row, ["weather", "fairProbability"]),
+    getAt(row, ["weather", "probability"]),
+    getAt(row, ["model", "weatherProbability"]),
+    getAt(row, ["model", "fairProbability"])
+  );
+
+  const explicitFinalProbability = firstProbability(
+    row.finalProbability,
+    row.blendedProbability,
+    row.combinedProbability,
+    row.posteriorProbability,
+    row.adjustedProbability,
+    row.finalProbabilityPct,
+    row.blendedProbabilityPct,
+    row.combinedProbabilityPct,
+    row.posteriorProbabilityPct,
+    getAt(row, ["final", "probability"]),
+    getAt(row, ["final", "probabilityPct"]),
+    getAt(row, ["blend", "probability"]),
+    getAt(row, ["blend", "probabilityPct"]),
+    getAt(row, ["blended", "probability"]),
+    getAt(row, ["blended", "probabilityPct"])
+  );
+
+  const genericProbability = firstProbability(
+    row.probability,
+    row.probabilityPct,
+    row.modelProbability,
+    row.modelProbabilityPct,
+    row.forecastProbability,
+    row.forecastProbabilityPct,
+    getAt(row, ["model", "probability"]),
+    getAt(row, ["model", "probabilityPct"])
+  );
+
+  /*
+    Backward compatibility:
+    If no explicit final probability exists, old engines usually put weather /
+    model probability in row.probability.
+  */
+  const weatherProbability =
+    explicitWeatherProbability ??
+    (explicitFinalProbability === null ? genericProbability : null);
+
+  const marketWeight =
+    probabilityContext.marketBlendEnabled && probabilityContext.marketWeight !== null
+      ? clampProbability(probabilityContext.marketWeight)
+      : probabilityContext.marketBlendEnabled
+        ? 0.35
+        : 0;
+
+  let finalProbability = explicitFinalProbability;
+  let finalProbabilitySource = "explicit_final_probability";
+
+  if (finalProbability === null) {
+    if (
+      probabilityContext.marketBlendEnabled &&
+      weatherProbability !== null &&
+      marketProbability !== null
+    ) {
+      finalProbability = roundProbability(
+        (1 - marketWeight) * weatherProbability + marketWeight * marketProbability
+      );
+      finalProbabilitySource = "route_computed_weather_market_blend";
+    } else {
+      finalProbability = weatherProbability ?? marketProbability ?? genericProbability;
+      finalProbabilitySource =
+        weatherProbability !== null
+          ? "weather_probability"
+          : marketProbability !== null
+            ? "market_probability"
+            : genericProbability !== null
+              ? "generic_probability"
+              : "missing";
+    }
+  }
+
+  const finalProbabilityRounded =
+    finalProbability === null ? null : roundProbability(finalProbability);
+
+  const weatherProbabilityRounded =
+    weatherProbability === null ? null : roundProbability(weatherProbability);
+
+  const marketProbabilityRounded =
+    marketProbability === null ? null : roundProbability(marketProbability);
+
+  const edgeBase = weatherProbabilityRounded ?? finalProbabilityRounded;
+
   const edge =
-    modelProbability !== null && marketProbability !== null
-      ? modelProbability - marketProbability
+    edgeBase !== null && marketProbabilityRounded !== null
+      ? edgeBase - marketProbabilityRounded
+      : null;
+
+  const finalEdge =
+    finalProbabilityRounded !== null && marketProbabilityRounded !== null
+      ? finalProbabilityRounded - marketProbabilityRounded
       : null;
 
   return {
@@ -1632,38 +2427,52 @@ function normalizeOutcomeForPage(
     upper,
 
     /*
-      Shape expected by page.tsx.
+      page.tsx legacy probability fields now map to final blended probability.
     */
-    probability: modelProbability,
-    probabilityPct:
-      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
+    probability: finalProbabilityRounded,
+    probabilityPct: probabilityToPct(finalProbabilityRounded),
+    modelProbability: finalProbabilityRounded,
+    modelProbabilityPct: probabilityToPct(finalProbabilityRounded),
+    forecastProbability: finalProbabilityRounded,
+    forecastProbabilityPct: probabilityToPct(finalProbabilityRounded),
 
     /*
-      Aliases for other UI / future code.
+      Phase 2 explicit probabilities.
     */
-    modelProbability,
-    modelProbabilityPct:
-      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
-    weatherProbability: modelProbability,
-    weatherProbabilityPct:
-      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
-    forecastProbability: modelProbability,
-    forecastProbabilityPct:
-      modelProbability === null ? null : Math.round(modelProbability * 10000) / 100,
+    weatherProbability: weatherProbabilityRounded,
+    weatherFairProbability: weatherProbabilityRounded,
+    weatherProbabilityPct: probabilityToPct(weatherProbabilityRounded),
+    weatherFairProbabilityPct: probabilityToPct(weatherProbabilityRounded),
 
-    marketProbability,
-    marketProbabilityPct:
-      marketProbability === null
-        ? null
-        : Math.round(marketProbability * 10000) / 100,
-    polymarketProbability: marketProbability,
-    polymarketProbabilityPct:
-      marketProbability === null
-        ? null
-        : Math.round(marketProbability * 10000) / 100,
+    marketProbability: marketProbabilityRounded,
+    marketProbabilityPct: probabilityToPct(marketProbabilityRounded),
+    polymarketProbability: marketProbabilityRounded,
+    polymarketProbabilityPct: probabilityToPct(marketProbabilityRounded),
+
+    finalProbability: finalProbabilityRounded,
+    finalProbabilityPct: probabilityToPct(finalProbabilityRounded),
+    blendedProbability: finalProbabilityRounded,
+    blendedProbabilityPct: probabilityToPct(finalProbabilityRounded),
+
+    gammaProbability,
+    gammaProbabilityPct: probabilityToPct(gammaProbability),
+
+    clobBestBid: clob.bid,
+    clobBestAsk: clob.ask,
+    clobMidpoint: clob.midpoint,
+    clobSpread: clob.spread,
+
+    marketBlendEnabled: probabilityContext.marketBlendEnabled,
+    marketWeight,
+    finalProbabilitySource,
 
     edge,
-    edgePct: edge === null ? null : Math.round(edge * 10000) / 100
+    edgePct: edge === null ? null : Math.round(edge * 10000) / 100,
+    fairEdge: edge,
+    fairEdgePct: edge === null ? null : Math.round(edge * 10000) / 100,
+    finalEdge,
+    finalEdgePct:
+      finalEdge === null ? null : Math.round(finalEdge * 10000) / 100
   };
 }
 
@@ -1921,8 +2730,10 @@ function buildEstimatedFinalMaxCForPage(
 
 function normalizeForecastResultForPage(
   forecast: Forecast,
-  aiCommentary: AiCommentary
+  aiCommentary: AiCommentary,
+  state: MarketState | null = null
 ): ForecastResult {
+  
   const forecastRecord = recordOrEmpty(forecast);
 
   const observedMaxCandidate =
@@ -1930,15 +2741,18 @@ function normalizeForecastResultForPage(
 
   const observedMaxLowerBoundC = observedMaxCandidate?.value ?? null;
 
-  const rawOutcomes = Array.isArray(forecastRecord.outcomes)
-    ? forecastRecord.outcomes
-    : Array.isArray(forecastRecord.probabilities)
-      ? forecastRecord.probabilities
-      : Array.isArray(forecastRecord.outcomeProbabilities)
-        ? forecastRecord.outcomeProbabilities
-        : [];
+ const rawOutcomeBuild = buildRawOutcomeRows({
+    forecastRecord,
+    state
+  });
 
-  const normalizedOutcomeRows = rawOutcomes.map(normalizeOutcomeForPage);
+  const rawOutcomes = rawOutcomeBuild.rows;
+
+  const probabilityContext = getProbabilityContext(forecastRecord);
+
+  const normalizedOutcomeRows = rawOutcomes.map((row, index) =>
+    normalizeOutcomeForPage(row, index, probabilityContext)
+  );
 
   const outcomeProbabilities = repairOutcomeProbabilitiesForObservedMax(
     normalizedOutcomeRows,
@@ -2027,11 +2841,13 @@ function normalizeForecastResultForPage(
 
     maxSoFarC
   );
-  const calculatedTopOutcome =
+ const calculatedTopOutcome =
     [...outcomeProbabilities].sort(
       (a, b) =>
-        (probabilityFromValue(b.probability) ?? -Infinity) -
-        (probabilityFromValue(a.probability) ?? -Infinity)
+        (firstProbability(b.finalProbability, b.blendedProbability, b.probability) ??
+          -Infinity) -
+        (firstProbability(a.finalProbability, a.blendedProbability, a.probability) ??
+          -Infinity)
     )[0] ?? null;
 
   const topOutcome = calculatedTopOutcome ?? forecastRecord.topOutcome ?? null;
@@ -2042,11 +2858,22 @@ function normalizeForecastResultForPage(
     stringArray(getAt(forecastRecord, ["diagnostics", "keyDrivers"])) ??
     [];
 
-  const warnings =
-    stringArray(forecastRecord.warnings) ??
-    stringArray(getAt(forecastRecord, ["summary", "warnings"])) ??
-    stringArray(getAt(forecastRecord, ["diagnostics", "warnings"])) ??
-    [];
+  const sourceStatus = buildSourceStatus({
+    forecastRecord,
+    weatherForDisplay
+  });
+
+  const warnings = collectWarnings({
+    forecastRecord,
+    weatherForDisplay,
+    sourceStatus
+  });
+
+  const confidence = getDisplayConfidence({
+    forecastRecord,
+    outcomeProbabilities,
+    warnings
+  });
 
   const aiExplanation = getAiExplanationText(aiCommentary);
 
@@ -2056,11 +2883,31 @@ function normalizeForecastResultForPage(
     estimatedFinalDailyMaxC: estimatedFinalMaxC,
     estimatedFinalDailyMax: estimatedFinalMaxC,
     percentiles: estimatedFinalMaxC,
-    quantiles: estimatedFinalMaxC
+    quantiles: estimatedFinalMaxC,
+    confidence,
+    marketBlendEnabled: probabilityContext.marketBlendEnabled,
+    marketWeight: probabilityContext.marketWeight
   };
 
   const diagnostics = {
     ...recordOrEmpty(forecastRecord.diagnostics),
+    phase2RoutePatch: true,
+    aiInputMode: "multi_channel_forecast_json",
+    outcomeUniverseSource: rawOutcomeBuild.source,
+    probabilitySemantics: {
+      probability:
+        "Legacy page alias for finalProbability / blendedProbability in Phase 2.",
+      weatherProbability: "Weather-only fair probability.",
+      marketProbability:
+        "Polymarket probability, preferring CLOB midpoint over Gamma price when available.",
+      finalProbability:
+        "Final blended probability after weather/market blend and observed max repair."
+    },
+    marketBlendEnabled: probabilityContext.marketBlendEnabled,
+    marketWeight: probabilityContext.marketWeight,
+    confidence,
+    warnings,
+    sourceStatus,
     estimatedFinalMaxC,
     estimatedFinalDailyMaxC: estimatedFinalMaxC,
     estimatedFinalDailyMax: estimatedFinalMaxC,
@@ -2120,9 +2967,10 @@ function normalizeForecastResultForPage(
       observedFinalMaxLowerBoundC: maxSoFarC
     },
 
-    aiExplanation,
+     aiExplanation,
     keyDrivers,
     warnings,
+    confidence,
 
     /*
       Compatibility aliases.
@@ -2131,6 +2979,7 @@ function normalizeForecastResultForPage(
       forecast.outcomes directly. Expose repaired normalized rows instead.
     */
     rawOutcomes,
+    outcomeUniverseSource: rawOutcomeBuild.source,
     outcomes: outcomeProbabilities,
     probabilities: outcomeProbabilities,
     estimatedFinalDailyMaxC: estimatedFinalMaxC,
@@ -2151,7 +3000,8 @@ function normalizeForecastResultForPage(
 
 function buildResultForHistory(
   forecast: Forecast,
-  aiCommentary: AiCommentary
+  aiCommentary: AiCommentary,
+  state: MarketState | null = null
 ): ForecastResult {
   /*
     Save the normalized result shape too, so history display can use:
@@ -2159,7 +3009,7 @@ function buildResultForHistory(
       row.result.estimatedFinalMaxC
       row.result.maxSoFarC
   */
-  return normalizeForecastResultForPage(forecast, aiCommentary);
+  return normalizeForecastResultForPage(forecast, aiCommentary, state);
 }
 
 async function ensureDatabaseInitialized() {
@@ -2204,7 +3054,8 @@ async function saveHistoryIfRequested(params: {
 
     const resultForHistory = buildResultForHistory(
       params.forecast,
-      params.aiCommentary
+      params.aiCommentary,
+      params.state
     );
 
     return await saveForecastRun({
@@ -2230,13 +3081,15 @@ function buildForecastPayload(params: {
   forecast: Forecast;
   aiCommentary: AiCommentary;
   historySave: HistorySaveResult;
+  state?: MarketState | null;
 }) {
   /*
     Normalize into the exact shape page.tsx expects.
   */
   const resultForDisplay = normalizeForecastResultForPage(
     params.forecast,
-    params.aiCommentary
+    params.aiCommentary,
+    params.state ?? null
   );
 
   const resultRecord = resultForDisplay as unknown as Record<string, unknown>;
@@ -2252,6 +3105,8 @@ function buildForecastPayload(params: {
     (params.forecast as Forecast & { weather?: unknown }).weather ??
     {}) as HkoWeatherSnapshot;
 
+   const multiChannelForecastJson =
+    buildMultiChannelForecastJson(resultForDisplay);
   const data = {
     ...resultRecord,
 
@@ -2261,7 +3116,7 @@ function buildForecastPayload(params: {
     result: resultForDisplay,
     forecast: resultForDisplay,
     weather: weatherForDisplay,
-
+    multiChannelForecastJson,
     /*
       Poe AI aliases.
     */
@@ -2360,10 +3215,25 @@ async function runForecast(options: RunForecastOptions) {
         Give Poe the same normalized / repaired data that the UI sees.
         Otherwise Poe may analyse raw missing / impossible probabilities.
       */
-      const forecastForAi = normalizeForecastResultForPage(
+      const normalizedForAi = normalizeForecastResultForPage(
         forecast,
-        null
-      ) as unknown as Forecast;
+        null,
+        options.state ?? null
+      );
+
+      const forecastForAi = {
+        ...(normalizedForAi as unknown as Record<string, unknown>),
+        aiInputMode: "multi_channel_forecast_json",
+        multiChannelForecastJson: buildMultiChannelForecastJson(normalizedForAi),
+        diagnostics: {
+          ...recordOrEmpty(
+            (normalizedForAi as unknown as Record<string, unknown>).diagnostics
+          ),
+          aiInputMode: "multi_channel_forecast_json",
+          poeInstruction:
+            "Use only the supplied outcomeUniverse and outcomeProbabilities. Do not invent buckets such as '22°C or higher' unless it appears in outcomeUniverse."
+        }
+      } as unknown as Forecast;
 
       aiCommentary = await getPoeForecastCommentary(forecastForAi);
 
@@ -2397,12 +3267,12 @@ async function runForecast(options: RunForecastOptions) {
     aiCommentary
   });
 
-  return buildForecastPayload({
+ return buildForecastPayload({
     forecast,
     aiCommentary,
-    historySave
+    historySave,
+    state: options.state ?? null
   });
-}
 
 export async function GET(request: Request) {
   try {
@@ -2490,7 +3360,9 @@ export async function POST(request: Request) {
     const state = parseMarketState(body.state);
     const saveHistory = parseBoolean(body.saveHistory, false);
 
-    const marketWeightOverride = parseNumber(body.marketWeight);
+    const marketWeightOverride =
+      parseNumber(url.searchParams.get("marketWeight")) ??
+      parseNumber(url.searchParams.get("marketWeightOverride"));
 
     const payload = await runForecast({
       includeClob,
