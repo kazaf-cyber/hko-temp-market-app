@@ -61,21 +61,22 @@ export async function generatePoeExplanation(params: {
   };
 });
     const payload = {
-      hkoCurrent: params.snapshot.current,
-      hkoSinceMidnight: params.snapshot.sinceMidnight,
-      hkoHourlyRainfall: params.snapshot.hourlyRainfall,
-      hkoForecastFirstThreeDays: params.snapshot.forecast.days.slice(0, 3),
-      marketState: params.state,
-      modelForecast: {
-        hktDate: params.forecast.hktDate,
-        maxSoFarC: params.forecast.maxSoFarC,
-        maxSoFarSource: params.forecast.maxSoFarSource,
-        estimatedFinalMaxC: params.forecast.estimatedFinalMaxC,
-        outcomeProbabilities: params.forecast.outcomeProbabilities,
-        keyDrivers: params.forecast.keyDrivers,
-        warnings: params.forecast.warnings
-      }
-    };
+  hkoCurrent: params.snapshot.current,
+  hkoSinceMidnight: params.snapshot.sinceMidnight,
+  hkoHourlyRainfall: params.snapshot.hourlyRainfall,
+  hkoForecastFirstThreeDays: params.snapshot.forecast.days.slice(0, 3),
+  marketState: params.state,
+  marketVsModel,
+  modelForecast: {
+    hktDate: params.forecast.hktDate,
+    maxSoFarC: params.forecast.maxSoFarC,
+    maxSoFarSource: params.forecast.maxSoFarSource,
+    estimatedFinalMaxC: params.forecast.estimatedFinalMaxC,
+    outcomeProbabilities: params.forecast.outcomeProbabilities,
+    keyDrivers: params.forecast.keyDrivers,
+    warnings: params.forecast.warnings
+  }
+};
 
     const completion = await client.chat.completions.create({
       model,
