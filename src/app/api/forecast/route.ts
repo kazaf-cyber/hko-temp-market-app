@@ -928,7 +928,11 @@ function repairOutcomeProbabilitiesForObservedMax(
 ): Record<string, unknown>[] {
   if (observedMaxC === null) {
     return rows.map((row) => {
-      const probability = probabilityFromValue(row.probability);
+      const probability = firstProbability(
+        row.finalProbability,
+        row.blendedProbability,
+        row.probability
+      );
 
       return probability === null
         ? row
@@ -940,25 +944,42 @@ function repairOutcomeProbabilitiesForObservedMax(
     outcomeContainsObservedMax(row, observedMaxC)
   );
 
-  let movedImpossibleMass = 0;
+  /*
+    Critical Phase 2 rule:
 
+      final daily max >= observed max so far
+
+    Buckets below the observed lower bound become impossible.
+
+    IMPORTANT:
+    Do NOT move the removed mass into the observed bucket. That was the cause
+    of stale distributions collapsing to 25°C after HKO observed 25°C.
+    Instead:
+      1. zero impossible buckets,
+      2. renormalize remaining final/weather probabilities if usable,
+      3. if no usable model probabilities remain, normalize market probabilities,
+      4. only if both model and market are missing, fallback to observed bucket.
+  */
   const repaired = rows.map((row) => {
-    const probability = probabilityFromValue(row.probability);
+    const probability = firstProbability(
+      row.finalProbability,
+      row.blendedProbability,
+      row.probability
+    );
+
     const impossibleByObservedMax = isOutcomeImpossibleByObservedMax(
       row,
       observedMaxC
     );
 
     if (impossibleByObservedMax) {
-      if (probability !== null) {
-        movedImpossibleMass += Math.max(0, probability);
-      }
-
       return setModelProbabilityOnRow(row, 0, {
         impossibleByObservedMax: true,
         observedMaxLowerBoundC: observedMaxC,
         modelProbabilityRepair:
-          "Set to 0 because observed max already exceeds this bucket."
+          probability !== null
+            ? "Set to 0 because observed max already exceeds this bucket. Removed mass was not moved to the observed bucket."
+            : "Set to 0 because observed max already exceeds this bucket."
       });
     }
 
@@ -969,22 +990,92 @@ function repairOutcomeProbabilitiesForObservedMax(
     };
   });
 
-  if (
-    movedImpossibleMass > PROBABILITY_EPSILON &&
-    observedBucketIndex >= 0
-  ) {
-    const currentObservedBucketProbability =
-      probabilityFromValue(repaired[observedBucketIndex].probability) ?? 0;
+  const possibleTotal = repaired.reduce((sum, row) => {
+    if (row.impossibleByObservedMax === true) {
+      return sum;
+    }
 
-    repaired[observedBucketIndex] = setModelProbabilityOnRow(
-      repaired[observedBucketIndex],
-      currentObservedBucketProbability + movedImpossibleMass,
-      {
+    const probability = firstProbability(
+      row.finalProbability,
+      row.blendedProbability,
+      row.probability
+    );
+
+    return sum + (probability === null ? 0 : Math.max(0, probability));
+  }, 0);
+
+  if (possibleTotal <= PROBABILITY_EPSILON) {
+    const possibleMarketTotal = repaired.reduce((sum, row) => {
+      if (row.impossibleByObservedMax === true) {
+        return sum;
+      }
+
+      const marketProbability = getMarketProbabilityFromRow(row);
+
+      return (
+        sum + (marketProbability === null ? 0 : Math.max(0, marketProbability))
+      );
+    }, 0);
+
+    /*
+      If final/weather probabilities are missing or stale, but market
+      probabilities exist, use normalized market probabilities across buckets
+      still possible after the observed max lower bound.
+    */
+    if (possibleMarketTotal > PROBABILITY_EPSILON) {
+      return repaired.map((row) => {
+        if (row.impossibleByObservedMax === true) {
+          return row;
+        }
+
+        const marketProbability = getMarketProbabilityFromRow(row) ?? 0;
+
+        return setModelProbabilityOnRow(row, marketProbability / possibleMarketTotal, {
+          modelProbabilityRepair:
+            "Final/weather probabilities were missing or stale after observed max repair, so normalized Polymarket probabilities were used across buckets still possible after observed max lower bound."
+        });
+      });
+    }
+
+    /*
+      True last resort only.
+    */
+    return repaired.map((row, index) => {
+      if (row.impossibleByObservedMax === true) {
+        return row;
+      }
+
+      return setModelProbabilityOnRow(row, index === observedBucketIndex ? 1 : 0, {
         modelProbabilityRepair:
-          "Received probability mass from buckets made impossible by observed max."
+          index === observedBucketIndex
+            ? "Fallback 100% to bucket containing observed max because final/weather and market probabilities were missing."
+            : "Fallback 0% because final/weather and market probabilities were missing."
+      });
+    });
+  }
+
+  const shouldNormalize = Math.abs(possibleTotal - 1) > 0.005;
+
+  return repaired.map((row) => {
+    if (row.impossibleByObservedMax === true) {
+      return row;
+    }
+
+    const probability =
+      firstProbability(row.finalProbability, row.blendedProbability, row.probability) ??
+      0;
+
+    return setModelProbabilityOnRow(
+      row,
+      shouldNormalize ? probability / possibleTotal : probability,
+      {
+        modelProbabilityRepair: shouldNormalize
+          ? "Renormalized remaining possible buckets after applying observed max lower bound."
+          : row.modelProbabilityRepair ?? null
       }
     );
-  }
+  });
+}
 
   const possibleTotal = repaired.reduce((sum, row) => {
     if (row.impossibleByObservedMax === true) {
