@@ -257,11 +257,11 @@ async function loadPolymarketOutcomes() {
 
   try {
     const response = await fetch(
-      `/api/polymarket?url=${encodeURIComponent(polymarketUrl)}`,
-      {
-        cache: "no-store"
-      }
-    );
+  `/api/polymarket?includeClob=1&url=${encodeURIComponent(polymarketUrl)}`,
+  {
+    cache: "no-store"
+  }
+);
 
     const json = (await response.json()) as PolymarketResponse;
 
