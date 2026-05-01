@@ -23,6 +23,43 @@ export async function generatePoeExplanation(params: {
       baseURL: "https://api.poe.com/v1"
     });
 
+    function getOutcomeMarketPrice(outcome: {
+  marketPrice?: unknown;
+  price?: unknown;
+}) {
+  if (typeof outcome.marketPrice === "number") {
+    return outcome.marketPrice;
+  }
+
+  if (typeof outcome.price === "number") {
+    return outcome.price;
+  }
+
+  return null;
+}
+    const marketVsModel = params.state.outcomes.map((outcome) => {
+  const modelProbability =
+    params.forecast.outcomeProbabilities?.find(
+      (item) => item.name === outcome.name
+    )?.probability ?? null;
+
+  const marketProbability = getOutcomeMarketPrice(outcome);
+
+  const edge =
+    typeof modelProbability === "number" &&
+    typeof marketProbability === "number"
+      ? modelProbability - marketProbability
+      : null;
+
+  return {
+    name: outcome.name,
+    lower: outcome.lower,
+    upper: outcome.upper,
+    polymarketProbability: marketProbability,
+    modelProbability,
+    edge
+  };
+});
     const payload = {
       hkoCurrent: params.snapshot.current,
       hkoSinceMidnight: params.snapshot.sinceMidnight,
