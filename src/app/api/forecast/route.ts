@@ -212,6 +212,28 @@ function firstProbability(...values: unknown[]): number | null {
 
   return null;
 }
+function getMarketProbabilityFromRow(
+  row: Record<string, unknown>
+): number | null {
+  return firstProbability(
+    row.marketProbability,
+    row.polymarketProbability,
+    row.marketPrice,
+    row.price,
+    row.clobMidpoint,
+    row.clobMid,
+    row.yesPrice,
+    row.lastPrice,
+    row.bestAsk,
+    row.bestBid,
+    row.clobBestAsk,
+    row.clobBestBid,
+    row.marketProbabilityPct,
+    row.polymarketProbabilityPct,
+    row.marketPct,
+    row.polymarketPct
+  );
+}
 type NumericCandidate = {
   value: number;
   source: string;
@@ -352,6 +374,41 @@ function getObservedMaxLowerBoundCandidate(
 ): NumericCandidate | null {
   return pickMaxCandidate([
     numberCandidate(
+      "observedMaxLowerBoundC",
+      forecastRecord.observedMaxLowerBoundC,
+      "Observed max lower bound"
+    ),
+    numberCandidate(
+      "observedFinalMaxLowerBoundC",
+      forecastRecord.observedFinalMaxLowerBoundC,
+      "Observed max lower bound"
+    ),
+    numberCandidate(
+      "observedMaxC",
+      forecastRecord.observedMaxC,
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "observedMax",
+      forecastRecord.observedMax,
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "hkoObservedMaxC",
+      forecastRecord.hkoObservedMaxC,
+      "HKO observed max"
+    ),
+    numberCandidate(
+      "hkoMaxSinceMidnightC",
+      forecastRecord.hkoMaxSinceMidnightC,
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "maxSinceMidnightC",
+      forecastRecord.maxSinceMidnightC,
+      "HKO max since midnight"
+    ),
+    numberCandidate(
       "maxSoFarC",
       forecastRecord.maxSoFarC,
       "Observed max so far"
@@ -409,6 +466,108 @@ function getObservedMaxLowerBoundCandidate(
       "HKO max since midnight"
     ),
 
+
+    numberCandidate(
+      "weather.observedMaxLowerBoundC",
+      getAt(forecastRecord, ["weather", "observedMaxLowerBoundC"]),
+      "Observed max lower bound"
+    ),
+    numberCandidate(
+      "weather.observedFinalMaxLowerBoundC",
+      getAt(forecastRecord, ["weather", "observedFinalMaxLowerBoundC"]),
+      "Observed max lower bound"
+    ),
+    numberCandidate(
+      "weather.observedMaxC",
+      getAt(forecastRecord, ["weather", "observedMaxC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weather.observedMax",
+      getAt(forecastRecord, ["weather", "observedMax"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weather.maxSoFarC",
+      getAt(forecastRecord, ["weather", "maxSoFarC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weather.observedMaxSoFarC",
+      getAt(forecastRecord, ["weather", "observedMaxSoFarC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weather.hkoMaxSinceMidnightC",
+      getAt(forecastRecord, ["weather", "hkoMaxSinceMidnightC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weather.maxSinceMidnightC",
+      getAt(forecastRecord, ["weather", "maxSinceMidnightC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weather.hkoCurrentTempC",
+      getAt(forecastRecord, ["weather", "hkoCurrentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.hkoCurrentTempC",
+      getAt(forecastRecord, ["weather", "current", "hkoCurrentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.currentTempC",
+      getAt(forecastRecord, ["weather", "current", "currentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "weather.current.tempC",
+      getAt(forecastRecord, ["weather", "current", "tempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "hko.currentTempC",
+      getAt(forecastRecord, ["hko", "currentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "hko.maxSinceMidnightC",
+      getAt(forecastRecord, ["hko", "maxSinceMidnightC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weatherSnapshot.observedMaxC",
+      getAt(forecastRecord, ["weatherSnapshot", "observedMaxC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "weatherSnapshot.maxSinceMidnightC",
+      getAt(forecastRecord, ["weatherSnapshot", "maxSinceMidnightC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "weatherSnapshot.currentTempC",
+      getAt(forecastRecord, ["weatherSnapshot", "currentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    numberCandidate(
+      "hkoWeatherSnapshot.observedMaxC",
+      getAt(forecastRecord, ["hkoWeatherSnapshot", "observedMaxC"]),
+      "Observed max so far"
+    ),
+    numberCandidate(
+      "hkoWeatherSnapshot.maxSinceMidnightC",
+      getAt(forecastRecord, ["hkoWeatherSnapshot", "maxSinceMidnightC"]),
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "hkoWeatherSnapshot.currentTempC",
+      getAt(forecastRecord, ["hkoWeatherSnapshot", "currentTempC"]),
+      "HKO current temperature fallback"
+    ),
+    
     numberCandidate(
       "weather.current.maxSoFarC",
       getAt(forecastRecord, ["weather", "current", "maxSoFarC"]),
@@ -599,12 +758,36 @@ function parseOutcomeRangeFromText(text: string): OutcomeRange {
 }
 
 function getOutcomeRange(row: Record<string, unknown>): OutcomeRange {
+  const parsedRange = parseOutcomeRangeFromText(
+    firstString(
+      row.range,
+      row.description,
+      row.name,
+      row.outcome,
+      row.label,
+      row.title
+    ) ?? ""
+  );
+
   return {
-    lower: firstNumber(row.lower),
-    upper: firstNumber(row.upper)
+    lower:
+      firstNumber(
+        row.lower,
+        row.min,
+        row.from,
+        getAt(row, ["range", "lower"]),
+        getAt(row, ["range", "from"])
+      ) ?? parsedRange.lower,
+    upper:
+      firstNumber(
+        row.upper,
+        row.max,
+        row.to,
+        getAt(row, ["range", "upper"]),
+        getAt(row, ["range", "to"])
+      ) ?? parsedRange.upper
   };
 }
-
 function isOutcomeImpossibleByObservedMax(
   row: Record<string, unknown>,
   observedMaxC: number
@@ -641,17 +824,7 @@ function setModelProbabilityOnRow(
 
   const modelProbabilityPct = probabilityToPct(modelProbability);
 
-  const marketProbability = firstProbability(
-    row.marketProbability,
-    row.polymarketProbability,
-    row.marketPrice,
-    row.price,
-    row.clobMidpoint,
-    row.marketProbabilityPct,
-    row.polymarketProbabilityPct,
-    row.marketPct,
-    row.polymarketPct
-  );
+  const marketProbability = getMarketProbabilityFromRow(row);
 
   const marketProbabilityPct = probabilityToPct(marketProbability);
 
@@ -779,7 +952,48 @@ function repairOutcomeProbabilitiesForObservedMax(
     This is not a full weather forecast, but it prevents impossible / missing
     output and obeys the hard observed lower bound.
   */
-  if (possibleTotal <= PROBABILITY_EPSILON) {
+ if (possibleTotal <= PROBABILITY_EPSILON) {
+    const possibleMarketTotal = repaired.reduce((sum, row) => {
+      if (row.impossibleByObservedMax === true) {
+        return sum;
+      }
+
+      const marketProbability = getMarketProbabilityFromRow(row);
+
+      return sum + (marketProbability === null ? 0 : Math.max(0, marketProbability));
+    }, 0);
+
+    /*
+      If model probabilities are missing, but market probabilities exist,
+      use normalized market probabilities across still-possible buckets.
+
+      Example:
+        observed max = 25.0°C
+        26°C market = 96%
+        27°C market = 6%
+        28°C market = 1%
+
+      Then model distribution should not stay "--".
+    */
+    if (possibleMarketTotal > PROBABILITY_EPSILON) {
+      return repaired.map((row) => {
+        if (row.impossibleByObservedMax === true) {
+          return row;
+        }
+
+        const marketProbability = getMarketProbabilityFromRow(row) ?? 0;
+
+        return setModelProbabilityOnRow(
+          row,
+          marketProbability / possibleMarketTotal,
+          {
+            modelProbabilityRepair:
+              "Model probabilities were missing, so normalized market probabilities were used across buckets still possible after observed max lower bound."
+          }
+        );
+      });
+    }
+
     return repaired.map((row, index) => {
       if (row.impossibleByObservedMax === true) {
         return row;
@@ -788,8 +1002,8 @@ function repairOutcomeProbabilitiesForObservedMax(
       return setModelProbabilityOnRow(row, index === observedBucketIndex ? 1 : 0, {
         modelProbabilityRepair:
           index === observedBucketIndex
-            ? "Fallback 100% to bucket containing observed max because model probabilities were missing."
-            : "Fallback 0% because model probabilities were missing."
+            ? "Fallback 100% to bucket containing observed max because both model and market probabilities were missing."
+            : "Fallback 0% because both model and market probabilities were missing."
       });
     });
   }
@@ -866,23 +1080,94 @@ function buildWeatherForDisplay(params: {
     params;
 
   const weatherRecord = recordOrEmpty(forecastRecord.weather);
+  const currentRecord = recordOrEmpty(weatherRecord.current);
   const sinceMidnightRecord = recordOrEmpty(weatherRecord.sinceMidnight);
+
+  const displayCurrentTempC = firstNumber(
+    forecastRecord.hkoCurrentTempC,
+    forecastRecord.currentTempC,
+    forecastRecord.currentTemperatureC,
+    getAt(forecastRecord, ["hko", "currentTempC"]),
+
+    weatherRecord.hkoCurrentTempC,
+    weatherRecord.currentTempC,
+    weatherRecord.currentTemperatureC,
+    weatherRecord.temperatureC,
+    weatherRecord.temperature,
+    getAt(weatherRecord, ["hko", "currentTempC"]),
+
+    currentRecord.hkoCurrentTempC,
+    currentRecord.currentTempC,
+    currentRecord.tempC,
+    currentRecord.temperatureC,
+    currentRecord.temperature,
+    getAt(currentRecord, ["temperature", "value"]),
+    currentRecord.airTemperatureC,
+    currentRecord.airTemperature,
+
+    getHkoTemperatureFromObservationArray(
+      getAt(forecastRecord, ["weather", "temperature", "data"])
+    ),
+    getHkoTemperatureFromObservationArray(
+      getAt(forecastRecord, ["weather", "current", "temperature", "data"])
+    ),
+    getHkoTemperatureFromObservationArray(
+      getAt(forecastRecord, ["weather", "raw", "temperature", "data"])
+    )
+  );
 
   const existingSinceMidnightMaxC = firstNumber(
     sinceMidnightRecord.maxTempC,
     sinceMidnightRecord.maxTemperatureC,
     sinceMidnightRecord.maxTemp,
-    sinceMidnightRecord.maxTemperature
+    sinceMidnightRecord.maxTemperature,
+
+    weatherRecord.hkoMaxSinceMidnightC,
+    weatherRecord.maxSinceMidnightC,
+    weatherRecord.maxSoFarC,
+    weatherRecord.observedMaxSoFarC,
+    weatherRecord.observedMaxC,
+
+    forecastRecord.hkoMaxSinceMidnightC,
+    forecastRecord.maxSinceMidnightC,
+    forecastRecord.maxSoFarC,
+    forecastRecord.observedMaxSoFarC,
+    forecastRecord.observedMaxC,
+    forecastRecord.observedMaxLowerBoundC,
+    forecastRecord.observedFinalMaxLowerBoundC
   );
+
+  const displaySinceMidnightMaxCandidate = pickMaxCandidate([
+    numberCandidate(
+      "existingSinceMidnightMaxC",
+      existingSinceMidnightMaxC,
+      "HKO max since midnight"
+    ),
+    numberCandidate(
+      "maxSoFarC",
+      maxSoFarC,
+      maxSoFarSource ?? "Observed max lower bound"
+    ),
+    numberCandidate(
+      "displayCurrentTempC",
+      displayCurrentTempC,
+      "HKO current temperature fallback"
+    )
+  ]);
+
+  const displaySinceMidnightMaxC =
+    displaySinceMidnightMaxCandidate?.value ?? null;
 
   const existingSinceMidnightMinC = firstNumber(
     sinceMidnightRecord.minTempC,
     sinceMidnightRecord.minTemperatureC,
     sinceMidnightRecord.minTemp,
-    sinceMidnightRecord.minTemperature
+    sinceMidnightRecord.minTemperature,
+    weatherRecord.hkoMinSinceMidnightC,
+    weatherRecord.minSinceMidnightC,
+    forecastRecord.hkoMinSinceMidnightC,
+    forecastRecord.minSinceMidnightC
   );
-
-  const displaySinceMidnightMaxC = existingSinceMidnightMaxC ?? maxSoFarC;
 
   const sinceMidnightMaxSource =
     existingSinceMidnightMaxC !== null
@@ -890,23 +1175,92 @@ function buildWeatherForDisplay(params: {
           sinceMidnightRecord.maxTempSource,
           sinceMidnightRecord.source
         ) ?? "HKO max since midnight"
-      : maxSoFarC !== null
-        ? `${maxSoFarSource ?? "observed temperature"} fallback`
+      : displaySinceMidnightMaxC !== null
+        ? displaySinceMidnightMaxCandidate?.source ??
+          maxSoFarSource ??
+          "observed temperature fallback"
         : null;
+
+  const currentRecordTime =
+    firstString(
+      currentRecord.recordTime,
+      currentRecord.obsTime,
+      currentRecord.time,
+      weatherRecord.recordTime,
+      weatherRecord.obsTime,
+      weatherRecord.updateTime,
+      forecastRecord.recordTime,
+      forecastRecord.obsTime,
+      forecastRecord.generatedAt
+    ) ?? null;
+
+  const hkoRecord = recordOrEmpty(weatherRecord.hko);
 
   return {
     ...weatherRecord,
 
     maxSoFarC,
     maxSoFarSource,
-    observedMaxSoFarC: maxSoFarC,
-    observedMaxSoFarSource: maxSoFarSource,
 
     /*
-      These aliases help frontend cards even if original weather shape differs.
+      Main observed lower-bound aliases.
     */
+    observedMaxLowerBoundC: maxSoFarC,
+    observedFinalMaxLowerBoundC: maxSoFarC,
+
+    /*
+      HKO display aliases.
+    */
+    hkoCurrentTempC,
+    hkoMaxSinceMidnightC,
+
+    hko: {
+      ...recordOrEmpty(forecastRecord.hko),
+      currentTempC: hkoCurrentTempC,
+      hkoCurrentTempC,
+      maxSinceMidnightC: hkoMaxSinceMidnightC,
+      hkoMaxSinceMidnightC,
+      observedMaxLowerBoundC: maxSoFarC,
+      observedFinalMaxLowerBoundC: maxSoFarC
+    },
+    
+    observedMaxSoFarC: maxSoFarC,
+    observedMaxSoFarSource: maxSoFarSource,
+  
+
+    /*
+      Top-level aliases for UI.
+    */
+    hkoCurrentTempC: displayCurrentTempC,
+    currentTempC: displayCurrentTempC,
+    currentTemperatureC: displayCurrentTempC,
+    temperatureC: displayCurrentTempC,
+
     hkoMaxSinceMidnightC: displaySinceMidnightMaxC,
+    maxSinceMidnightC: displaySinceMidnightMaxC,
     hkoMinSinceMidnightC: existingSinceMidnightMinC,
+    minSinceMidnightC: existingSinceMidnightMinC,
+
+    current: {
+      ...currentRecord,
+      hkoCurrentTempC: displayCurrentTempC,
+      currentTempC: displayCurrentTempC,
+      currentTemperatureC: displayCurrentTempC,
+      tempC: displayCurrentTempC,
+      temperatureC: displayCurrentTempC,
+      temperature: displayCurrentTempC,
+      recordTime: currentRecordTime
+    },
+
+    hko: {
+      ...hkoRecord,
+      currentTempC: displayCurrentTempC,
+      hkoCurrentTempC: displayCurrentTempC,
+      maxSinceMidnightC: displaySinceMidnightMaxC,
+      hkoMaxSinceMidnightC: displaySinceMidnightMaxC,
+      observedMaxLowerBoundC: maxSoFarC,
+      observedFinalMaxLowerBoundC: maxSoFarC
+    },
 
     sinceMidnight: {
       ...sinceMidnightRecord,
@@ -934,6 +1288,14 @@ function buildWeatherForDisplay(params: {
         valueC: maxSoFarC,
         source: maxSoFarSource,
         path: observedMaxCandidate?.path ?? null
+      },
+      hkoCurrentTemperature: {
+        valueC: displayCurrentTempC,
+        source: displayCurrentTempC !== null ? "HKO current temperature" : null
+      },
+      hkoMaxSinceMidnight: {
+        valueC: displaySinceMidnightMaxC,
+        source: sinceMidnightMaxSource
       }
     }
   };
@@ -1123,17 +1485,7 @@ function normalizeOutcomeForPage(
     row.probabilityPct
   );
 
-  const marketProbability = firstProbability(
-    row.marketProbability,
-    row.polymarketProbability,
-    row.marketPrice,
-    row.price,
-    row.clobMidpoint,
-    row.marketProbabilityPct,
-    row.polymarketProbabilityPct,
-    row.marketPct,
-    row.polymarketPct
-  );
+  const marketProbability = getMarketProbabilityFromRow(row);
 
   const edge =
     modelProbability !== null && marketProbability !== null
@@ -1417,14 +1769,19 @@ function buildEstimatedFinalMaxCForPage(
       getAt(forecastRecord, ["diagnostics", "quantiles", "p90"])
     ) ?? derived.p90;
 
-  return clampEstimatedFinalMaxC(
+   return clampEstimatedFinalMaxC(
     {
-      p10,
-      p25,
-      median,
-      p50: median,
-      p75,
-      p90
+      /*
+        Prefer repaired outcome-derived distribution.
+        This prevents stale raw forecast quantiles such as 22.5°C from winning
+        after market/outcome repair has already produced a valid distribution.
+      */
+      p10: derived.p10 ?? p10,
+      p25: derived.p25 ?? p25,
+      median: derived.median ?? median,
+      p50: derived.p50 ?? derived.median ?? median,
+      p75: derived.p75 ?? p75,
+      p90: derived.p90 ?? p90
     },
     observedMaxLowerBoundC
   );
@@ -1490,7 +1847,24 @@ function normalizeForecastResultForPage(
     maxSoFarC,
     maxSoFarSource
   });
+ const hkoCurrentTempC = firstNumber(
+    getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]),
+    getAt(weatherForDisplay, ["current", "currentTempC"]),
+    getAt(weatherForDisplay, ["hkoCurrentTempC"]),
+    getAt(weatherForDisplay, ["currentTempC"]),
+    getAt(weatherForDisplay, ["hko", "currentTempC"]),
+    getAt(weatherForDisplay, ["hko", "hkoCurrentTempC"])
+  );
 
+  const hkoMaxSinceMidnightC = firstNumber(
+    getAt(weatherForDisplay, ["sinceMidnight", "maxTempC"]),
+    getAt(weatherForDisplay, ["sinceMidnight", "maxTemperatureC"]),
+    getAt(weatherForDisplay, ["hkoMaxSinceMidnightC"]),
+    getAt(weatherForDisplay, ["maxSinceMidnightC"]),
+    getAt(weatherForDisplay, ["hko", "maxSinceMidnightC"]),
+    getAt(weatherForDisplay, ["hko", "hkoMaxSinceMidnightC"]),
+    maxSoFarC
+  );
   const calculatedTopOutcome =
     [...outcomeProbabilities].sort(
       (a, b) =>
@@ -1498,7 +1872,7 @@ function normalizeForecastResultForPage(
         (probabilityFromValue(a.probability) ?? -Infinity)
     )[0] ?? null;
 
-  const topOutcome = forecastRecord.topOutcome ?? calculatedTopOutcome;
+  const topOutcome = calculatedTopOutcome ?? forecastRecord.topOutcome ?? null;
 
   const keyDrivers =
     stringArray(forecastRecord.keyDrivers) ??
@@ -1752,6 +2126,33 @@ function buildForecastPayload(params: {
     estimatedFinalDailyMax: resultRecord.estimatedFinalDailyMax ?? null,
     maxSoFarC: resultRecord.maxSoFarC ?? null,
     maxSoFarSource: resultRecord.maxSoFarSource ?? null,
+
+    observedMaxLowerBoundC:
+      resultRecord.observedMaxLowerBoundC ??
+      resultRecord.observedFinalMaxLowerBoundC ??
+      resultRecord.maxSoFarC ??
+      null,
+
+    observedFinalMaxLowerBoundC:
+      resultRecord.observedFinalMaxLowerBoundC ??
+      resultRecord.observedMaxLowerBoundC ??
+      resultRecord.maxSoFarC ??
+      null,
+
+    hkoCurrentTempC:
+      resultRecord.hkoCurrentTempC ??
+      getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]) ??
+      getAt(weatherForDisplay, ["hkoCurrentTempC"]) ??
+      getAt(weatherForDisplay, ["currentTempC"]) ??
+      null,
+
+    hkoMaxSinceMidnightC:
+      resultRecord.hkoMaxSinceMidnightC ??
+      getAt(weatherForDisplay, ["sinceMidnight", "maxTempC"]) ??
+      getAt(weatherForDisplay, ["hkoMaxSinceMidnightC"]) ??
+      getAt(weatherForDisplay, ["maxSinceMidnightC"]) ??
+      resultRecord.maxSoFarC ??
+      null,
 
     /*
       Poe AI top-level aliases.
