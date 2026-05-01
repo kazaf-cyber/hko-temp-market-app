@@ -68,7 +68,7 @@ const buttonSecondary =
   "rounded-xl bg-slate-700 px-4 py-2 font-semibold text-slate-100 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50";
 
 function formatTemp(value: number | null | undefined) {
-  if (typeof value !== "number") {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return "--";
   }
 
@@ -76,7 +76,7 @@ function formatTemp(value: number | null | undefined) {
 }
 
 function formatPercent(value: number | null | undefined) {
-  if (typeof value !== "number") {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return "--";
   }
 
@@ -84,7 +84,7 @@ function formatPercent(value: number | null | undefined) {
 }
 
 function formatSignedPercent(value: number | null | undefined) {
-  if (typeof value !== "number") {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return "--";
   }
 
@@ -113,7 +113,13 @@ function formatHktDateTime(isoString: string | null | undefined) {
     return "--";
   }
 
-  return new Date(isoString).toLocaleString("zh-HK", {
+  const date = new Date(isoString);
+
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return date.toLocaleString("zh-HK", {
     timeZone: "Asia/Hong_Kong",
     hour12: false
   });
@@ -174,8 +180,10 @@ export default function HomePage() {
   const [forecast, setForecast] = useState<ForecastResult | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [settlement, setSettlement] = useState<SettlementResult | null>(null);
-  const [polymarketUrl, setPolymarketUrl] = useState( "https://polymarket.com/zh-hant/event/highest-temperature-in-hong-kong-on-may-1-2026"
-);
+
+  const [polymarketUrl, setPolymarketUrl] = useState(
+    "https://polymarket.com/zh-hant/event/highest-temperature-in-hong-kong-on-may-1-2026"
+  );
 
   const [loadingPolymarket, setLoadingPolymarket] = useState(false);
   const [adminSecret, setAdminSecret] = useState("");
@@ -193,9 +201,9 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const officialForecastMax = useMemo(
-  () => weather?.forecast?.days?.[0]?.forecastMaxtempC ?? null,
-  [weather]
-);
+    () => weather?.forecast?.days?.[0]?.forecastMaxtempC ?? null,
+    [weather]
+  );
 
   function updateState(partial: Partial<MarketState>) {
     setState((previous) => ({
@@ -216,7 +224,7 @@ export default function HomePage() {
     }
 
     setState(json.data.state);
-    setOutcomesJson(JSON.stringify(json.data.state.outcomes, null, 2));
+    setOutcomesJson(JSON.stringify(json.data.state.outcomes ?? [], null, 2));
     setDatabaseEnabled(json.data.databaseEnabled);
     setPersisted(json.data.persisted);
   }
@@ -253,48 +261,51 @@ export default function HomePage() {
       setHistory(json.data.history);
     }
   }
-  
-async function loadPolymarketOutcomes() {
-  setLoadingPolymarket(true);
-  setError(null);
-  setMessage(null);
 
-  try {
-    const response = await fetch(
-  `/api/polymarket?includeClob=1&url=${encodeURIComponent(polymarketUrl)}`,
-  {
-    cache: "no-store"
-  }
-);
+  async function loadPolymarketOutcomes() {
+    setLoadingPolymarket(true);
+    setError(null);
+    setMessage(null);
 
-    const json = (await response.json()) as PolymarketResponse;
+    try {
+      const response = await fetch(
+        `/api/polymarket?includeClob=1&url=${encodeURIComponent(
+          polymarketUrl
+        )}`,
+        {
+          cache: "no-store"
+        }
+      );
 
-    if (!json.ok || !json.data) {
-      throw new Error(json.error || "Failed to load Polymarket outcomes.");
+      const json = (await response.json()) as PolymarketResponse;
+
+      if (!json.ok || !json.data) {
+        throw new Error(json.error || "Failed to load Polymarket outcomes.");
+      }
+
+      const nextOutcomes = json.data.outcomes;
+
+      setState((previous) => ({
+        ...previous,
+        outcomes: nextOutcomes
+      }));
+
+      setOutcomesJson(JSON.stringify(nextOutcomes, null, 2));
+
+      setMessage(
+        `Loaded ${nextOutcomes.length} Polymarket outcomes from ${json.data.slug}. Now run forecast again.`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unknown Polymarket loading error."
+      );
+    } finally {
+      setLoadingPolymarket(false);
     }
-
-    const nextOutcomes = json.data.outcomes;
-
-    setState((previous) => ({
-      ...previous,
-      outcomes: nextOutcomes
-    }));
-
-    setOutcomesJson(JSON.stringify(nextOutcomes, null, 2));
-
-    setMessage(
-      `Loaded ${nextOutcomes.length} Polymarket outcomes from ${json.data.slug}. Now run forecast again.`
-    );
-  } catch (err) {
-    setError(
-      err instanceof Error
-        ? err.message
-        : "Unknown Polymarket loading error."
-    );
-  } finally {
-    setLoadingPolymarket(false);
   }
-}
+
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -519,9 +530,9 @@ async function loadPolymarketOutcomes() {
 
         <section className="grid gap-4 md:grid-cols-5">
           <Card
-          label="HKO Current Temp"
-          value={formatTemp(weather?.current?.hkoCurrentTempC)}
-         sub={`Record: ${weather?.current?.recordTime ?? "--"}`}
+            label="HKO Current Temp"
+            value={formatTemp(weather?.current?.hkoCurrentTempC)}
+            sub={`Record: ${weather?.current?.recordTime ?? "--"}`}
           />
 
           <Card
@@ -540,10 +551,10 @@ async function loadPolymarketOutcomes() {
             label="Official Forecast Max"
             value={formatTemp(officialForecastMax)}
             sub={`PSR: ${
-            weather?.forecast?.days?.[0]?.psr ??
-            weather?.forecast?.days?.[0]?.PSR ??
-             "--"
-             }`}
+              weather?.forecast?.days?.[0]?.psr ??
+              weather?.forecast?.days?.[0]?.PSR ??
+              "--"
+            }`}
           />
 
           <Card
@@ -562,8 +573,8 @@ async function loadPolymarketOutcomes() {
             <div>
               <h2 className="text-xl font-semibold">Controls</h2>
               <p className="mt-1 text-sm text-slate-400">
-                這裡控制市場假設。HKO max-so-far 已自動取得；除非你要 override，
-                否則 manual override 留空。
+                這裡控制市場假設。HKO max-so-far 已自動取得；除非你要
+                override，否則 manual override 留空。
               </p>
             </div>
 
@@ -577,7 +588,7 @@ async function loadPolymarketOutcomes() {
               </button>
 
               <button
-                onClick={() => void runForecast(true, state.useAI)}
+                onClick={() => void runForecast(true, Boolean(state.useAI))}
                 disabled={forecastLoading}
                 className={buttonPrimary}
               >
@@ -587,34 +598,37 @@ async function loadPolymarketOutcomes() {
           </div>
 
           <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950 p-4">
-  <label className="block">
-    <span className="text-sm text-slate-300">
-      Polymarket event URL / slug
-    </span>
+            <label className="block">
+              <span className="text-sm text-slate-300">
+                Polymarket event URL / slug
+              </span>
 
-    <input
-      value={polymarketUrl}
-      onChange={(event) => setPolymarketUrl(event.target.value)}
-      className={inputClass}
-      type="text"
-      placeholder="Paste Polymarket event URL here"
-    />
-  </label>
+              <input
+                value={polymarketUrl}
+                onChange={(event) => setPolymarketUrl(event.target.value)}
+                className={inputClass}
+                type="text"
+                placeholder="Paste Polymarket event URL here"
+              />
+            </label>
 
-  <div className="mt-3 flex flex-wrap gap-2">
-    <button
-      onClick={() => void loadPolymarketOutcomes()}
-      disabled={loadingPolymarket}
-      className={buttonSecondary}
-    >
-      {loadingPolymarket ? "Loading Polymarket..." : "Load Polymarket outcomes"}
-    </button>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void loadPolymarketOutcomes()}
+                disabled={loadingPolymarket}
+                className={buttonSecondary}
+              >
+                {loadingPolymarket
+                  ? "Loading Polymarket..."
+                  : "Load Polymarket outcomes"}
+              </button>
 
-    <p className="text-sm text-slate-400">
-      讀取後會更新 outcomes JSON；之後再按「更新預測並儲存」重新計算概率。
-       </p>
-     </div>
-     </div>
+              <p className="text-sm text-slate-400">
+                讀取後會更新 outcomes JSON；之後再按「更新預測並儲存」重新計算概率。
+              </p>
+            </div>
+          </div>
+
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             <label className="block">
               <span className="text-sm text-slate-300">
@@ -622,7 +636,7 @@ async function loadPolymarketOutcomes() {
               </span>
               <input
                 value={
-                  state.manualMaxOverrideC === null
+                  state.manualMaxOverrideC == null
                     ? ""
                     : String(state.manualMaxOverrideC)
                 }
@@ -647,7 +661,7 @@ async function loadPolymarketOutcomes() {
               </span>
               <input
                 value={
-                  state.rainEtaMinutes === null
+                  state.rainEtaMinutes == null
                     ? ""
                     : String(state.rainEtaMinutes)
                 }
@@ -668,7 +682,11 @@ async function loadPolymarketOutcomes() {
             <label className="block">
               <span className="text-sm text-slate-300">Cloud cover %</span>
               <input
-                value={state.cloudCoverPct}
+                value={
+                  typeof state.cloudCoverPct === "number"
+                    ? state.cloudCoverPct
+                    : 85
+                }
                 onChange={(event) =>
                   updateState({
                     cloudCoverPct: Number(event.target.value)
@@ -687,7 +705,11 @@ async function loadPolymarketOutcomes() {
                 Rain probability 60m
               </span>
               <input
-                value={state.rainProbability60m}
+                value={
+                  typeof state.rainProbability60m === "number"
+                    ? state.rainProbability60m
+                    : 0.65
+                }
                 onChange={(event) =>
                   updateState({
                     rainProbability60m: Number(event.target.value)
@@ -706,7 +728,11 @@ async function loadPolymarketOutcomes() {
                 Rain probability 120m
               </span>
               <input
-                value={state.rainProbability120m}
+                value={
+                  typeof state.rainProbability120m === "number"
+                    ? state.rainProbability120m
+                    : 0.75
+                }
                 onChange={(event) =>
                   updateState({
                     rainProbability120m: Number(event.target.value)
@@ -723,7 +749,7 @@ async function loadPolymarketOutcomes() {
             <label className="block">
               <span className="text-sm text-slate-300">Rain intensity</span>
               <select
-                value={state.expectedRainIntensity}
+                value={String(state.expectedRainIntensity ?? "moderate")}
                 onChange={(event) =>
                   updateState({
                     expectedRainIntensity: event.target.value as RainIntensity
@@ -743,7 +769,7 @@ async function loadPolymarketOutcomes() {
           <label className="mt-5 flex items-center gap-2 text-sm text-slate-300">
             <input
               type="checkbox"
-              checked={state.useAI}
+              checked={Boolean(state.useAI)}
               onChange={(event) =>
                 updateState({
                   useAI: event.target.checked
@@ -765,75 +791,73 @@ async function loadPolymarketOutcomes() {
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="text-slate-400">
-  <tr>
-    <th className="border-b border-slate-800 py-3 pr-4">
-      Outcome
-    </th>
+                  <tr>
+                    <th className="border-b border-slate-800 py-3 pr-4">
+                      Outcome
+                    </th>
+                    <th className="border-b border-slate-800 py-3 pr-4">
+                      Range
+                    </th>
+                    <th className="border-b border-slate-800 py-3 pr-4">
+                      Polymarket
+                    </th>
+                    <th className="border-b border-slate-800 py-3 pr-4">
+                      Model
+                    </th>
+                    <th className="border-b border-slate-800 py-3 pr-4">
+                      Edge
+                    </th>
+                    <th className="border-b border-slate-800 py-3">
+                      Bar
+                    </th>
+                  </tr>
+                </thead>
 
-    <th className="border-b border-slate-800 py-3 pr-4">
-      Range
-    </th>
-
-    <th className="border-b border-slate-800 py-3 pr-4">
-      Polymarket
-    </th>
-
-    <th className="border-b border-slate-800 py-3 pr-4">
-      Model
-    </th>
-
-    <th className="border-b border-slate-800 py-3 pr-4">
-      Edge
-    </th>
-
-    <th className="border-b border-slate-800 py-3">
-      Bar
-    </th>
-  </tr>
-</thead>
                 <tbody>
-                  
-                  {state.outcomes.map((outcome) => {
-  const probability =
-    forecast?.outcomeProbabilities?.find(
-      (item) => item.name === outcome.name
-    )?.probability ?? null;
+                  {(state.outcomes ?? []).map((outcome) => {
+                    const probability =
+                      forecast?.outcomeProbabilities?.find(
+                        (item) => item.name === outcome.name
+                      )?.probability ?? null;
 
-  const marketPrice = getOutcomeMarketPrice(outcome);
+                    const marketPrice = getOutcomeMarketPrice(outcome);
 
-  const edge =
-    typeof probability === "number" && typeof marketPrice === "number"
-      ? probability - marketPrice
-      : null;
+                    const edge =
+                      typeof probability === "number" &&
+                      typeof marketPrice === "number"
+                        ? probability - marketPrice
+                        : null;
 
-  return (
-    <tr key={outcome.name}>
-      
+                    return (
+                      <tr key={outcome.name}>
                         <td className="border-b border-slate-800 py-3 pr-4 font-medium">
                           {outcome.name}
                         </td>
+
                         <td className="border-b border-slate-800 py-3 pr-4 text-slate-300">
                           {rangeLabel(outcome.lower, outcome.upper)}
                         </td>
-                       <td className="border-b border-slate-800 py-3 pr-4 text-slate-300">
-                     {formatPercent(marketPrice)}
-                    </td>
 
-                     <td className="border-b border-slate-800 py-3 pr-4 text-cyan-300">
-                       {formatPercent(probability)}
-                    </td>
+                        <td className="border-b border-slate-800 py-3 pr-4 text-slate-300">
+                          {formatPercent(marketPrice)}
+                        </td>
 
-                    <td
-                      className={
-                   edge !== null && edge > 0
-                      ? "border-b border-slate-800 py-3 pr-4 text-emerald-300"
-                     : edge !== null && edge < 0
-                     ? "border-b border-slate-800 py-3 pr-4 text-red-300"
-                     : "border-b border-slate-800 py-3 pr-4 text-slate-400"
-                     }
-                     >
-                    {formatSignedPercent(edge)}
-                      </td>
+                        <td className="border-b border-slate-800 py-3 pr-4 text-cyan-300">
+                          {formatPercent(probability)}
+                        </td>
+
+                        <td
+                          className={
+                            edge !== null && edge > 0
+                              ? "border-b border-slate-800 py-3 pr-4 text-emerald-300"
+                              : edge !== null && edge < 0
+                                ? "border-b border-slate-800 py-3 pr-4 text-red-300"
+                                : "border-b border-slate-800 py-3 pr-4 text-slate-400"
+                          }
+                        >
+                          {formatSignedPercent(edge)}
+                        </td>
+
                         <td className="border-b border-slate-800 py-3">
                           <div className="h-3 w-full rounded-full bg-slate-800">
                             <div
@@ -872,50 +896,40 @@ async function loadPolymarketOutcomes() {
                 </p>
 
                 <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
-  <div className="rounded-xl bg-slate-950 p-3">
-    <p className="text-slate-400">P10</p>
-    <p className="text-2xl font-bold">
-      {formatTemp(forecast.estimatedFinalMaxC?.p10)}
-    </p>
-  </div>
+                  <div className="rounded-xl bg-slate-950 p-3">
+                    <p className="text-slate-400">P10</p>
+                    <p className="text-2xl font-bold">
+                      {formatTemp(forecast.estimatedFinalMaxC?.p10)}
+                    </p>
+                  </div>
 
-  <div className="rounded-xl bg-slate-950 p-3">
-    <p className="text-slate-400">P25</p>
-    <p className="text-2xl font-bold">
-      {formatTemp(forecast.estimatedFinalMaxC?.p25)}
-    </p>
-  </div>
+                  <div className="rounded-xl bg-slate-950 p-3">
+                    <p className="text-slate-400">P25</p>
+                    <p className="text-2xl font-bold">
+                      {formatTemp(forecast.estimatedFinalMaxC?.p25)}
+                    </p>
+                  </div>
 
-  <div className="rounded-xl bg-slate-950 p-3">
-    <p className="text-slate-400">Median</p>
-    <p className="text-2xl font-bold text-cyan-300">
-      {formatTemp(forecast.estimatedFinalMaxC?.median)}
-    </p>
-  </div>
+                  <div className="rounded-xl bg-slate-950 p-3">
+                    <p className="text-slate-400">Median</p>
+                    <p className="text-2xl font-bold text-cyan-300">
+                      {formatTemp(forecast.estimatedFinalMaxC?.median)}
+                    </p>
+                  </div>
 
-  <div className="rounded-xl bg-slate-950 p-3">
-    <p className="text-slate-400">P75</p>
-    <p className="text-2xl font-bold">
-      {formatTemp(forecast.estimatedFinalMaxC?.p75)}
-    </p>
-  </div>
+                  <div className="rounded-xl bg-slate-950 p-3">
+                    <p className="text-slate-400">P75</p>
+                    <p className="text-2xl font-bold">
+                      {formatTemp(forecast.estimatedFinalMaxC?.p75)}
+                    </p>
+                  </div>
 
-  <div className="rounded-xl bg-slate-950 p-3">
-    <p className="text-slate-400">P90</p>
-    <p className="text-2xl font-bold">
-      {formatTemp(forecast.estimatedFinalMaxC?.p90)}
-    </p>
-  </div>
-</div>
-
-                <div className="mt-4 rounded-xl bg-slate-950 p-4">
-                  <p className="text-sm font-semibold text-cyan-300">
-                    Poe AI explanation
-                  </p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                    {forecast.aiExplanation ||
-                      "AI explanation disabled or not available."}
-                  </p>
+                  <div className="rounded-xl bg-slate-950 p-3">
+                    <p className="text-slate-400">P90</p>
+                    <p className="text-2xl font-bold">
+                      {formatTemp(forecast.estimatedFinalMaxC?.p90)}
+                    </p>
+                  </div>
                 </div>
               </>
             ) : (
@@ -927,22 +941,59 @@ async function loadPolymarketOutcomes() {
         </section>
 
         {forecast && (
+          <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-100">
+                  Poe AI explanation
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  Full AI analysis. Long output is scrollable inside this panel.
+                </p>
+              </div>
+
+              <div className="rounded-full bg-slate-950 px-3 py-1 text-xs text-cyan-300">
+                Scrollable
+              </div>
+            </div>
+
+            <div className="mt-4 max-h-screen overflow-y-auto rounded-xl border border-slate-800 bg-slate-950 p-4">
+              <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-7 text-slate-200">
+                {forecast.aiExplanation ||
+                  "AI explanation disabled or not available."}
+              </pre>
+            </div>
+          </section>
+        )}
+
+        {forecast && (
           <section className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <h2 className="text-xl font-semibold">Key drivers</h2>
+
               <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-slate-300">
-                {(forecast.keyDrivers ?? []).map((driver) => (
-                 <li key={driver}>{driver}</li>
-                 ))}
+                {(forecast.keyDrivers ?? []).length > 0 ? (
+                  (forecast.keyDrivers ?? []).map((driver) => (
+                    <li key={driver}>{driver}</li>
+                  ))
+                ) : (
+                  <li>No key drivers returned.</li>
+                )}
               </ul>
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
               <h2 className="text-xl font-semibold">Warnings</h2>
+
               <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-amber-200">
-                {(forecast.warnings ?? []).map((warning) => (
-                 <li key={warning}>{warning}</li>
-                ))}
+                {(forecast.warnings ?? []).length > 0 ? (
+                  (forecast.warnings ?? []).map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))
+                ) : (
+                  <li>No warnings.</li>
+                )}
               </ul>
             </div>
           </section>
@@ -953,12 +1004,16 @@ async function loadPolymarketOutcomes() {
 
           <p className="mt-1 text-sm text-slate-400">
             Database enabled:{" "}
-            <span className={databaseEnabled ? "text-emerald-300" : "text-red-300"}>
+            <span
+              className={databaseEnabled ? "text-emerald-300" : "text-red-300"}
+            >
               {databaseEnabled ? "yes" : "no"}
             </span>
             {" · "}
             State persisted:{" "}
-            <span className={persisted ? "text-emerald-300" : "text-amber-300"}>
+            <span
+              className={persisted ? "text-emerald-300" : "text-amber-300"}
+            >
               {persisted ? "yes" : "no"}
             </span>
           </p>
@@ -1047,17 +1102,23 @@ async function loadPolymarketOutcomes() {
               <div className="mt-4 rounded-xl bg-slate-950 p-4 text-sm">
                 <p>
                   Date:{" "}
-                  <span className="text-cyan-300">{settlement.date}</span>
+                  <span className="text-cyan-300">
+                    {settlement.date ?? "--"}
+                  </span>
                 </p>
+
                 <p>
                   Official max:{" "}
                   <span className="text-cyan-300">
                     {formatTemp(settlement.officialMaxTempC)}
                   </span>
                 </p>
+
                 <p>Available: {settlement.available ? "yes" : "no"}</p>
                 <p>Raw key: {settlement.rawKey ?? "--"}</p>
-                <p className="mt-2 text-slate-400">{settlement.note}</p>
+                <p className="mt-2 text-slate-400">
+                  {settlement.note ?? "--"}
+                </p>
               </div>
             )}
           </div>
@@ -1091,21 +1152,24 @@ async function loadPolymarketOutcomes() {
 
                   <tbody>
                     {history.map((row) => {
-                      const topOutcome = [...(row.result.outcomeProbabilities ?? [])].sort(
-                     (a, b) => b.probability - a.probability
-                      )[0];
+                      const topOutcome = [
+                        ...(row.result.outcomeProbabilities ?? [])
+                      ].sort((a, b) => b.probability - a.probability)[0];
 
                       return (
                         <tr key={row.id}>
                           <td className="border-b border-slate-800 py-2 pr-3">
                             {formatHktDateTime(row.createdAt)}
                           </td>
+
                           <td className="border-b border-slate-800 py-2 pr-3">
                             {formatTemp(row.result.maxSoFarC)}
                           </td>
+
                           <td className="border-b border-slate-800 py-2 pr-3">
                             {formatTemp(row.result.estimatedFinalMaxC?.median)}
                           </td>
+
                           <td className="border-b border-slate-800 py-2">
                             {topOutcome
                               ? `${topOutcome.name} ${formatPercent(
