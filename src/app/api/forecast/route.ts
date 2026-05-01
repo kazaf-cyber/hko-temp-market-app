@@ -8,8 +8,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Forecast = Awaited<ReturnType<typeof getForecast>>;
+
+type AiFallbackCommentary = {
+  explanation: string;
+};
+
 type AiCommentary =
   | Awaited<ReturnType<typeof getPoeForecastCommentary>>
+  | AiFallbackCommentary
+  | string
   | null;
 
 type HistorySaveResult = {
@@ -999,7 +1006,7 @@ async function runForecast(options: RunForecastOptions) {
         aiCommentary = {
           explanation:
             "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape."
-        } as Awaited<ReturnType<typeof getPoeForecastCommentary>>;
+        };
       }
     } catch (error) {
       console.error("Poe AI commentary error:", error);
@@ -1009,7 +1016,7 @@ async function runForecast(options: RunForecastOptions) {
           error instanceof Error
             ? `Poe AI explanation failed: ${error.message}`
             : "Poe AI explanation failed."
-      } as Awaited<ReturnType<typeof getPoeForecastCommentary>>;
+      };
     }
   }
 
