@@ -5,6 +5,11 @@ import { getPoeForecastCommentary } from "@/lib/poe";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type HistorySaveResult = {
+  saved: boolean;
+  reason: string | null;
+};
+
 function parseBoolean(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
 
@@ -34,24 +39,67 @@ function parseNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function getDefaultHistorySave(saveHistory: boolean): HistorySaveResult {
+  if (!saveHistory) {
+    return {
+      saved: false,
+      reason: "History save was not requested."
+    };
+  }
+
+  return {
+    saved: false,
+    reason: "History saving is not connected in /api/forecast yet."
+  };
+}
+
 function buildForecastPayload(params: {
   forecast: Awaited<ReturnType<typeof getForecast>>;
   aiCommentary: Awaited<ReturnType<typeof getPoeForecastCommentary>> | null;
+  historySave: HistorySaveResult;
 }) {
+  /*
+    Important compatibility layer:
+
+    Your frontend currently expects:
+
+      json.data.result
+      json.data.weather
+      json.data.historySave.saved
+
+    The old API response only used:
+
+      data: forecast
+
+    and did not include data.historySave.
+
+    So we now make data backward-compatible by including:
+      - all forecast fields
+      - result: forecast
+      - historySave: { saved, reason }
+  */
+  const data = {
+    ...params.forecast,
+    result: params.forecast,
+    historySave: params.historySave
+  };
+
   return {
     ok: true,
     generatedAt: params.forecast.generatedAt,
 
     /*
-      New canonical shape.
+      New canonical shape, with frontend compatibility fields.
     */
-    data: params.forecast,
+    data,
     ai: params.aiCommentary,
 
     /*
       Backward-friendly aliases for older UI code.
     */
     forecast: params.forecast,
+    result: params.forecast,
+    historySave: params.historySave,
     outcomes: params.forecast.outcomes,
     probabilities: params.forecast.outcomes.map((outcome) => ({
       name: outcome.name,
@@ -74,16 +122,24 @@ function buildForecastPayload(params: {
   };
 }
 
-async function runForecast(options: GetForecastOptions & { ai?: boolean }) {
+async function runForecast(
+  options: GetForecastOptions & {
+    ai?: boolean;
+    saveHistory?: boolean;
+  }
+) {
   const forecast = await getForecast(options);
 
   const aiCommentary = options.ai
     ? await getPoeForecastCommentary(forecast)
     : null;
 
+  const historySave = getDefaultHistorySave(Boolean(options.saveHistory));
+
   return buildForecastPayload({
     forecast,
-    aiCommentary
+    aiCommentary,
+    historySave
   });
 }
 
@@ -96,22 +152,28 @@ export async function GET(request: Request) {
       - includeClob true because Phase 2 is multi-channel.
       - blendMarket true because final probability should use CLOB/Gamma when available.
       - ai false by default to avoid spending Poe credits on every dashboard refresh.
+      - saveHistory false for GET requests.
     */
     const includeClob = parseBoolean(url.searchParams.get("includeClob"), true);
     const blendMarket = parseBoolean(url.searchParams.get("blendMarket"), true);
     const debug = parseBoolean(url.searchParams.get("debug"), false);
+
     const ai =
       parseBoolean(url.searchParams.get("ai"), false) ||
-      parseBoolean(url.searchParams.get("explain"), false);
+      parseBoolean(url.searchParams.get("explain"), false) ||
+      parseBoolean(url.searchParams.get("forceAI"), false);
 
-    const marketWeightOverride = parseNumber(url.searchParams.get("marketWeight"));
+    const marketWeightOverride = parseNumber(
+      url.searchParams.get("marketWeight")
+    );
 
     const payload = await runForecast({
       includeClob,
       blendMarket,
       includeRawSnapshot: debug,
       marketWeightOverride,
-      ai
+      ai,
+      saveHistory: false
     });
 
     return NextResponse.json(payload, {
@@ -146,9 +208,11 @@ export async function POST(request: Request) {
 
     try {
       const parsed = await request.json();
-      body = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {};
+
+      body =
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : {};
     } catch {
       body = {};
     }
@@ -156,7 +220,29 @@ export async function POST(request: Request) {
     const includeClob = parseBoolean(body.includeClob, true);
     const blendMarket = parseBoolean(body.blendMarket, true);
     const debug = parseBoolean(body.debug, false);
-    const ai = parseBoolean(body.ai ?? body.explain, false);
+
+    /*
+      Frontend may send:
+        - ai
+        - explain
+        - forceAI
+
+      Your page.tsx seems to send forceAI, so we support all three.
+    */
+    const ai =
+      parseBoolean(body.ai, false) ||
+      parseBoolean(body.explain, false) ||
+      parseBoolean(body.forceAI, false);
+
+    /*
+      Frontend sends saveHistory.
+      This route now returns data.historySave every time.
+
+      Actual database save is not wired here yet because the original file
+      does not import any DB/history function.
+    */
+    const saveHistory = parseBoolean(body.saveHistory, false);
+
     const marketWeightOverride = parseNumber(body.marketWeight);
 
     const payload = await runForecast({
@@ -164,7 +250,8 @@ export async function POST(request: Request) {
       blendMarket,
       includeRawSnapshot: debug,
       marketWeightOverride,
-      ai
+      ai,
+      saveHistory
     });
 
     return NextResponse.json(payload, {
