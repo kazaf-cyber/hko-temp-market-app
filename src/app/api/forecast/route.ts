@@ -1702,36 +1702,35 @@ function collectWarnings(params: {
   })) {
     for (const path of paths) {
       const message = firstString(getAt(forecastRecord, path));
-+
-+      if (message) {
-+        addWarning(warnings, `${sourceName}: ${message}`);
-+      }
-+    }
-+  }
-+
-+  const marketBlendEnabled = firstBoolean(
-+    forecastRecord.marketBlendEnabled,
-+    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
-+    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"])
-+  );
-+
-+  if (marketBlendEnabled === false) {
-+    addWarning(
-+      warnings,
-+      "Market blending is disabled or unavailable; final probabilities may be weather-only or fallback-normalized."
-+    );
-+  }
-+
-+  return warnings;
-+}
-+
-+function getStateOutcomeRows(state: MarketState | null | undefined): unknown[] {
-+  if (!state) {
-+    return [];
-+  }
-+
+
+      if (message) {
+        addWarning(warnings, `${sourceName}: ${message}`);
+      }
+    }
+  }
+
+  const marketBlendEnabled = firstBoolean(
+    forecastRecord.marketBlendEnabled,
+    getAt(forecastRecord, ["model", "marketBlendEnabled"]),
+    getAt(forecastRecord, ["diagnostics", "marketBlendEnabled"])
+  );
+
+  if (marketBlendEnabled === false) {
+    addWarning(
+      warnings,
+      "Market blending is disabled or unavailable; final probabilities may be weather-only or fallback-normalized."
+    );
+  }
+
+  return warnings;
+}
+
+function getStateOutcomeRows(state: MarketState | null | undefined): unknown[] {
+  if (!state) {
+    return [];
+  }
+
 +  const stateRecord = recordOrEmpty(state);
-+
 +  const candidates = [
 +    stateRecord.outcomes,
 +    stateRecord.probabilities,
