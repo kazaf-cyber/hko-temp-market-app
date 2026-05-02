@@ -297,8 +297,12 @@ function probabilityToPct(value: number | null): number | null {
   return Math.round(clampProbability(value) * 10000) / 100;
 }
 
-function roundProbability(value: number): number {
-  return Math.round(clampProbability(value) * 10000) / 10000;
+function complementProbability(value: number | null): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return roundProbability(1 - value);
 }
 function getEffectiveMarketWeight(
   probabilityContext: ProbabilityContext
@@ -338,28 +342,78 @@ function getClobBidAskFromRow(row: Record<string, unknown>): {
   midpoint: number | null;
   spread: number | null;
 } {
-  const bid = firstProbability(
+  /*
+    Polymarket UI often shows:
+      Buy Yes = YES ask
+      Buy No  = NO ask
+
+    For a binary market:
+      YES bid ≈ 1 - NO ask
+
+    So if yesBid is unavailable but noAsk exists, synthesize a YES bid from
+    noAsk. This makes the app's midpoint line up with Polymarket's displayed
+    bold percentage much more closely.
+  */
+  const noAsk = firstProbability(
+    row.noAsk,
+    row.noBestAsk,
+    row.noBestAskPrice,
+    row.noAskPrice,
+    row.clobNoAsk,
+    row.clobNoBestAsk,
+    getAt(row, ["clob", "noAsk"]),
+    getAt(row, ["clob", "noBestAsk"]),
+    getAt(row, ["clob", "noBestAskPrice"]),
+    getAt(row, ["market", "noAsk"]),
+    getAt(row, ["market", "noBestAsk"]),
+    getAt(row, ["polymarket", "noAsk"]),
+    getAt(row, ["polymarket", "noBestAsk"])
+  );
+
+  const directBid = firstProbability(
     row.clobBestBid,
     row.bestBid,
     row.bid,
+    row.yesBid,
+    row.yesBestBid,
+    row.yesBestBidPrice,
+    row.yesBidPrice,
     getAt(row, ["clob", "bestBid"]),
     getAt(row, ["clob", "bid"]),
+    getAt(row, ["clob", "yesBid"]),
+    getAt(row, ["clob", "yesBestBid"]),
     getAt(row, ["market", "clobBestBid"]),
     getAt(row, ["market", "bestBid"]),
+    getAt(row, ["market", "bid"]),
+    getAt(row, ["market", "yesBid"]),
     getAt(row, ["polymarket", "clobBestBid"]),
-    getAt(row, ["polymarket", "bestBid"])
+    getAt(row, ["polymarket", "bestBid"]),
+    getAt(row, ["polymarket", "bid"]),
+    getAt(row, ["polymarket", "yesBid"])
   );
+
+  const bid = directBid ?? complementProbability(noAsk);
 
   const ask = firstProbability(
     row.clobBestAsk,
     row.bestAsk,
     row.ask,
+    row.yesAsk,
+    row.yesBestAsk,
+    row.yesBestAskPrice,
+    row.yesAskPrice,
     getAt(row, ["clob", "bestAsk"]),
     getAt(row, ["clob", "ask"]),
+    getAt(row, ["clob", "yesAsk"]),
+    getAt(row, ["clob", "yesBestAsk"]),
     getAt(row, ["market", "clobBestAsk"]),
     getAt(row, ["market", "bestAsk"]),
+    getAt(row, ["market", "ask"]),
+    getAt(row, ["market", "yesAsk"]),
     getAt(row, ["polymarket", "clobBestAsk"]),
-    getAt(row, ["polymarket", "bestAsk"])
+    getAt(row, ["polymarket", "bestAsk"]),
+    getAt(row, ["polymarket", "ask"]),
+    getAt(row, ["polymarket", "yesAsk"])
   );
 
   const explicitMidpoint = firstProbability(
@@ -382,11 +436,15 @@ function getClobBidAskFromRow(row: Record<string, unknown>): {
   const explicitSpread = firstProbability(
     row.clobSpread,
     row.spread,
+    row.bidAskSpread,
     getAt(row, ["clob", "spread"]),
+    getAt(row, ["clob", "bidAskSpread"]),
     getAt(row, ["market", "clobSpread"]),
     getAt(row, ["market", "spread"]),
+    getAt(row, ["market", "bidAskSpread"]),
     getAt(row, ["polymarket", "clobSpread"]),
-    getAt(row, ["polymarket", "spread"])
+    getAt(row, ["polymarket", "spread"]),
+    getAt(row, ["polymarket", "bidAskSpread"])
   );
 
   const spread =
@@ -432,46 +490,106 @@ function getMarketProbabilityFromRow(
   row: Record<string, unknown>
 ): number | null {
   const clob = getClobBidAskFromRow(row);
+  const gammaProbability = getGammaProbabilityFromRow(row);
 
   /*
-    Prefer explicit market probability, then CLOB midpoint, then price aliases.
-    Bid/ask are last-resort fallbacks when midpoint is unavailable.
+    IMPORTANT:
+
+    The UI's "Polymarket" column should show the current market-implied price,
+    not the normalized internal market distribution used for blending.
+
+    Therefore priority should be:
+
+      1. Live CLOB midpoint / synthetic bid-ask midpoint.
+      2. Direct raw market price from forecast.ts, usually marketRawPrice.
+      3. Gamma / YES price fallback.
+      4. Explicit marketProbability aliases as a last fallback only.
+
+    This avoids showing stale Admin state prices or normalized blend weights as
+    if they were Polymarket prices.
   */
   return firstProbability(
+    /*
+      1. Live CLOB.
+    */
+    clob.midpoint,
+    row.clobMidpoint,
+    row.clobMid,
+    getAt(row, ["clob", "midpoint"]),
+    getAt(row, ["clob", "mid"]),
+    getAt(row, ["market", "clobMidpoint"]),
+    getAt(row, ["market", "clobMid"]),
+    getAt(row, ["polymarket", "clobMidpoint"]),
+    getAt(row, ["polymarket", "clobMid"]),
+
+    /*
+      2. Forecast engine direct raw market price.
+      This is the value that should match Polymarket's displayed percentage.
+    */
+    row.marketRawPrice,
+    row.rawMarketPrice,
+    row.polymarketRawPrice,
+    getAt(row, ["market", "rawPrice"]),
+    getAt(row, ["market", "marketRawPrice"]),
+    getAt(row, ["polymarket", "rawPrice"]),
+    getAt(row, ["polymarket", "marketRawPrice"]),
+
+    /*
+      3. Gamma / YES price fallback.
+    */
+    gammaProbability,
+    row.gammaProbability,
+    row.gammaProbabilityPct,
+    row.gammaPrice,
+    row.gammaMidpoint,
+    row.gammaMid,
+    row.gammaYesPrice,
+    row.gammaLastPrice,
+    getAt(row, ["gamma", "probability"]),
+    getAt(row, ["gamma", "probabilityPct"]),
+    getAt(row, ["gamma", "price"]),
+    getAt(row, ["gamma", "yesPrice"]),
+    getAt(row, ["gamma", "lastPrice"]),
+
+    /*
+      4. Generic market price aliases.
+    */
+    row.marketPrice,
+    row.price,
+    row.yesPrice,
+    row.lastPrice,
+    getAt(row, ["market", "price"]),
+    getAt(row, ["market", "yesPrice"]),
+    getAt(row, ["polymarket", "price"]),
+    getAt(row, ["polymarket", "yesPrice"]),
+
+    /*
+      5. Explicit market probability aliases.
+      Keep these late because forecast.ts previously used marketProbability as
+      a normalized distribution for blending, not as a direct Polymarket price.
+    */
     row.marketProbability,
     row.polymarketProbability,
     row.marketProbabilityPct,
     row.polymarketProbabilityPct,
     row.marketPct,
     row.polymarketPct,
-
-    clob.midpoint,
-
-    row.clobMidpoint,
-    row.clobMid,
-    row.marketPrice,
-    row.price,
-    row.yesPrice,
-    row.lastPrice,
-
     getAt(row, ["market", "probability"]),
     getAt(row, ["market", "probabilityPct"]),
-    getAt(row, ["market", "price"]),
-    getAt(row, ["market", "yesPrice"]),
     getAt(row, ["polymarket", "probability"]),
     getAt(row, ["polymarket", "probabilityPct"]),
-    getAt(row, ["polymarket", "price"]),
-    getAt(row, ["polymarket", "yesPrice"]),
 
+    /*
+      6. Last-resort bid / ask.
+    */
+    clob.ask,
+    clob.bid,
     row.bestAsk,
     row.bestBid,
     row.clobBestAsk,
-    row.clobBestBid,
-    clob.ask,
-    clob.bid
+    row.clobBestBid
   );
 }
-
 function normalizeStationName(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -2728,6 +2846,92 @@ function outcomeRangeKey(row: Record<string, unknown>): string | null {
   return `range:${range.lower ?? ""}:${range.upper ?? ""}`;
 }
 
+const FORECAST_MARKET_FIELD_KEYS = [
+  "marketProbability",
+  "marketProbabilityPct",
+  "polymarketProbability",
+  "polymarketProbabilityPct",
+  "marketPct",
+  "polymarketPct",
+
+  "marketRawPrice",
+  "rawMarketPrice",
+  "polymarketRawPrice",
+  "marketPrice",
+  "price",
+  "yesPrice",
+  "noPrice",
+  "lastPrice",
+
+  "gammaProbability",
+  "gammaProbabilityPct",
+  "gammaPrice",
+  "gammaMidpoint",
+  "gammaMid",
+  "gammaYesPrice",
+  "gammaNoPrice",
+  "gammaLastPrice",
+
+  "clobBestBid",
+  "clobBestAsk",
+  "clobMidpoint",
+  "clobMid",
+  "clobSpread",
+  "bestBid",
+  "bestAsk",
+  "bid",
+  "ask",
+  "mid",
+  "midpoint",
+  "spread",
+  "bidAskSpread",
+
+  "yesAsk",
+  "noAsk",
+  "yesBid",
+
+  "marketPriceSource",
+  "marketProbabilitySource",
+  "clobSource",
+  "gammaSource",
+
+  "market",
+  "polymarket",
+  "clob",
+  "gamma",
+
+  /*
+    Event-specific identifiers.
+    If forecastRow has current-event identifiers, they should not be overwritten
+    by old Admin state token IDs.
+  */
+  "tokenId",
+  "clobTokenId",
+  "yesTokenId",
+  "noTokenId",
+  "assetId",
+  "yesAssetId",
+  "conditionId",
+  "question",
+  "marketSlug"
+] as const;
+
+function hasUsableValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+
+  return true;
+}
+
 function mergeStateOutcomeWithForecastOutcome(params: {
   stateRow: Record<string, unknown>;
   forecastRow: Record<string, unknown> | null;
@@ -2777,7 +2981,20 @@ function mergeStateOutcomeWithForecastOutcome(params: {
       merged[key] = forecastRow[key];
     }
   }
+/*
+    Protect fresh market data too.
 
+    State rows define the outcome universe, but they must not overwrite fresh
+    CLOB/Gamma data fetched by the forecast engine. Otherwise the UI can show
+    stale Polymarket prices from Admin JSON / DB state.
+  */
+  for (const key of FORECAST_MARKET_FIELD_KEYS) {
+    const value = forecastRow[key];
+
+    if (hasUsableValue(value)) {
+      merged[key] = value;
+    }
+  }
   const stateName = firstString(
     stateRow.name,
     stateRow.outcome,
