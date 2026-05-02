@@ -1671,19 +1671,6 @@ function getMarketRawPrice(outcome: OutcomeRange, clob: ClobRow | null) {
 
 function getRowsForMarketCoverage(prepared: PreparedOutcome[]) {
   /*
-    Market coverage should be evaluated mainly on still-possible outcomes.
-
-    If observed max has already made lower buckets impossible, those impossible
-    buckets should not drag market coverage down and disable blending for the
-    remaining possible settlement buckets.
-  */
-  const eligible = prepared.filter((item) => !item.impossible);
-
-  return eligible.length > 0 ? eligible : prepared;
-}
-
-function getRowsForMarketCoverage(prepared: PreparedOutcome[]) {
-  /*
     Phase 3:
 
     Market coverage should be evaluated on outcomes that are still possible.
