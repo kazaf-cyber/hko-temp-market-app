@@ -3,7 +3,7 @@ import {
   type MultiChannelSnapshot
 } from "@/lib/multichannel";
 import { getMarketState } from "@/lib/state";
-import type { OutcomeRange } from "@/types";
+import type { MarketState, OutcomeRange } from "@/types";
 
 export const FORECAST_ENGINE_VERSION = "multi-channel-v2.1.0";
 
@@ -288,6 +288,17 @@ export type GetForecastOptions = {
   includeRawSnapshot?: boolean;
   marketWeightOverride?: number;
   now?: Date;
+
+  /*
+    Allow route.ts POST body.state to override DB/default state.
+    Without this, the forecast engine ignores the state supplied by the UI.
+  */
+  state?: MarketState | null;
+
+  /*
+    Optional Polymarket event URL/slug fallback for hydrating token IDs/prices.
+  */
+  polymarketUrl?: string | null;
 };
 
 type PreparedOutcome = {
@@ -2557,19 +2568,32 @@ export async function getForecast(
   let marketState: MarketStateLike = {};
   let marketStateError: string | null = null;
 
-  try {
-    const rawMarketState = await getMarketState();
-    marketState = unwrapMarketState(rawMarketState);
-  } catch (error) {
-    marketStateError =
-      error instanceof Error ? error.message : "Failed to load market state.";
+ if (options.state) {
+    marketState = unwrapMarketState(options.state);
+  } else {
+    try {
+      const rawMarketState = await getMarketState();
+      marketState = unwrapMarketState(rawMarketState);
+    } catch (error) {
+      marketStateError =
+        error instanceof Error ? error.message : "Failed to load market state.";
+    }
   }
 
   const outcomes = extractOutcomes(marketState);
-
+  const polymarketUrl =
+    options.polymarketUrl ??
+    asString(marketState.polymarketUrl) ??
+    asString(marketState.marketUrl) ??
+    asString(marketState.url) ??
+    asString(marketState.eventUrl) ??
+    asString(marketState.eventSlug) ??
+    asString(marketState.slug);
+  
   const snapshot = await getMultiChannelSnapshot({
     outcomes,
-    includeClob: includeClob && outcomes.length > 0
+    includeClob: includeClob && (outcomes.length > 0 || polymarketUrl !== null),
+    polymarketUrl
   });
 
   return buildForecastFromMultiChannelSnapshot({
