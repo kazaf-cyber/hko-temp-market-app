@@ -75,6 +75,23 @@ function firstNumber(values: Array<number | null | undefined>) {
   );
 }
 
+function hasClobTokenIds(outcomes: OutcomeRange[] | null | undefined) {
+  return Boolean(
+    outcomes?.some((outcome) => {
+      const record = outcome as unknown as Record<string, unknown>;
+
+      return [
+        record.yesTokenId,
+        record.noTokenId,
+        record.clobTokenId,
+        record.tokenId,
+        record.assetId,
+        record.yesAssetId
+      ].some((value) => typeof value === "string" && value.trim().length > 0);
+    })
+  );
+}
+
 function nextHoursOpenMeteo(openMeteo: OpenMeteoForecast | null, hours: number) {
   if (!openMeteo) return [];
 
@@ -222,32 +239,40 @@ export async function getMultiChannelSnapshot(params?: {
 
   let polymarketClob: PolymarketClobSnapshot | null = null;
 
-  if (params?.includeClob) {
-  try {
-    let outcomes = params.outcomes;
+ if (params?.includeClob) {
+    try {
+      let outcomes = params.outcomes ?? [];
 
-    if (!outcomes && params.polymarketUrl) {
-      const polymarket = await getPolymarketOutcomesFromInput(
+      /*
+        If the current outcome rows exist but do not contain CLOB token IDs,
+        hydrate them from the Polymarket event URL/slug when available.
+      */
+      if (
+        (!outcomes.length || !hasClobTokenIds(outcomes)) &&
         params.polymarketUrl
-      );
-      outcomes = polymarket.outcomes;
-    }
+      ) {
+        const polymarket = await getPolymarketOutcomesFromInput(
+          params.polymarketUrl
+        );
 
-    if (!outcomes) {
-      outcomes = (await getMarketState()).state.outcomes;
-    }
+        outcomes = polymarket.outcomes;
+      }
 
-    polymarketClob = await getPolymarketClobSnapshot(outcomes);
-  } catch (error) {
-    errors.push({
-      source: "polymarket-clob",
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unknown Polymarket CLOB error"
-    });
+      if (!outcomes.length) {
+        outcomes = (await getMarketState()).state.outcomes;
+      }
+
+      polymarketClob = await getPolymarketClobSnapshot(outcomes);
+    } catch (error) {
+      errors.push({
+        source: "polymarket-clob",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unknown Polymarket CLOB error"
+      });
+    }
   }
-}
 
   const derived = deriveSignals({
     hko,
