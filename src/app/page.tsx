@@ -9,7 +9,7 @@ import type {
   SettlementResult
 } from "@/types";
 import { defaultMarketState } from "@/lib/defaults";
-
+import { TradingSignalsTable } from "@/components/dashboard/TradingSignalsTable";
 type StateResponse = {
   ok: boolean;
   data?: {
@@ -941,9 +941,12 @@ setMessage(nextMessage);
             />
             Use Poe AI explanation
           </label>
+          
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-2">
+       <TradingSignalsTable forecast={forecast} />
+
+       <section className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
             <h2 className="text-xl font-semibold">Market outcomes</h2>
 
