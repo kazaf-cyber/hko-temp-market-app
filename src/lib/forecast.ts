@@ -1682,6 +1682,26 @@ function getRowsForMarketCoverage(prepared: PreparedOutcome[]) {
   return eligible.length > 0 ? eligible : prepared;
 }
 
+function getRowsForMarketCoverage(prepared: PreparedOutcome[]) {
+  /*
+    Phase 3:
+
+    Market coverage should be evaluated on outcomes that are still possible.
+
+    Example:
+    - If HKO observed max is already 28.4C,
+    - then low buckets like "<26C" or "26-27C" are already impossible.
+    - Those impossible buckets should not drag market coverage down.
+    - Otherwise the app may incorrectly disable market blending late in the day.
+
+    If every row is impossible for some reason, fall back to the full list so
+    diagnostics still remain meaningful instead of dividing by an empty set.
+  */
+  const eligible = prepared.filter((item) => !item.impossible);
+
+  return eligible.length > 0 ? eligible : prepared;
+}
+
 function getAverageClobSpread(prepared: PreparedOutcome[]) {
   const rows = getRowsForMarketCoverage(prepared);
 
@@ -1704,9 +1724,12 @@ function getMarketCoverageStats(prepared: PreparedOutcome[]) {
   const coverage = rows.length > 0 ? validMarketCount / rows.length : 0;
 
   /*
-    Normally require at least 2 market-priced outcomes so normalization is
-    meaningful. If only one eligible outcome remains, one valid price is enough
-    because the final distribution is already effectively determined.
+    Normally require at least 2 market-priced outcomes because normalizing a
+    market distribution from only one outcome is usually meaningless.
+
+    Exception:
+    If only one eligible outcome remains, one valid market price is enough
+    because the settlement distribution is effectively determined already.
   */
   const requiredValidCount = rows.length <= 1 ? rows.length : 2;
 
@@ -2193,7 +2216,7 @@ export function buildForecastFromMultiChannelSnapshot(params: {
   const noEligibleOutcomes =
     prepared.length > 0 && eligible.every((value) => !value);
 
-  const weatherProbabilities = normalizeScores(
+ const weatherProbabilities = normalizeScores(
   prepared.map((item) => item.weatherScore),
   eligible
 );
@@ -2203,11 +2226,11 @@ const marketCoverageStats = getMarketCoverageStats(prepared);
 const marketProbabilitiesAvailable = marketCoverageStats.available;
 
   const marketProbabilities = marketProbabilitiesAvailable
-    ? normalizeScores(
-        prepared.map((item) => item.marketRawPrice ?? 0),
-        eligible
-      )
-    : prepared.map(() => null);
+  ? normalizeScores(
+      prepared.map((item) => item.marketRawPrice ?? 0),
+      eligible
+    )
+  : prepared.map(() => null);
 
   const marketWeight = calculateMarketWeight({
     prepared,
@@ -2217,23 +2240,23 @@ const marketProbabilitiesAvailable = marketCoverageStats.available;
   });
 
   const finalScores = prepared.map((item, index) => {
-    if (item.impossible) return 0;
+  if (item.impossible) return 0;
 
-    const weatherProbability = weatherProbabilities[index] ?? 0;
-    const marketProbability =
-      typeof marketProbabilities[index] === "number"
-        ? (marketProbabilities[index] as number)
-        : null;
+  const weatherProbability = weatherProbabilities[index] ?? 0;
+  const marketProbability =
+    typeof marketProbabilities[index] === "number"
+      ? (marketProbabilities[index] as number)
+      : null;
 
-    if (marketWeight > 0 && marketProbability !== null) {
-      return (
-        weatherProbability * (1 - marketWeight) +
-        marketProbability * marketWeight
-      );
-    }
+  if (marketWeight > 0 && marketProbability !== null) {
+    return (
+      weatherProbability * (1 - marketWeight) +
+      marketProbability * marketWeight
+    );
+  }
 
-    return weatherProbability;
-  });
+  return weatherProbability;
+});
 
   const finalProbabilities = normalizeScores(finalScores, eligible);
 
@@ -2377,7 +2400,7 @@ const gammaProbability = roundNumber(
       : null;
 
   const averageClobSpread = getAverageClobSpread(prepared);
-const marketCoverage = marketCoverageStats.coverage;
+  const marketCoverage = marketCoverageStats.coverage;
 
   const warnings = buildWarnings({
     sourceErrors: params.snapshot.errors,
@@ -2492,12 +2515,12 @@ const marketCoverage = marketCoverageStats.coverage;
       marketWeight
     }),
 
-    diagnostics: {
+  diagnostics: {
   sourceStatus: {
-    hko: hkoSourceAvailable,
-    openMeteo: params.snapshot.openMeteo !== null,
-    windy: Boolean(params.snapshot.windy?.enabled),
-    polymarketClob: Boolean(params.snapshot.polymarketClob?.enabled)
+  hko: hkoSourceAvailable,
+  openMeteo: params.snapshot.openMeteo !== null,
+  windy: Boolean(params.snapshot.windy?.enabled),
+  polymarketClob: Boolean(params.snapshot.polymarketClob?.enabled)
   },
   sourceErrors: params.snapshot.errors,
   marketStateError: params.marketStateError ?? null,
@@ -2510,7 +2533,7 @@ const marketCoverage = marketCoverageStats.coverage;
   marketWeight: roundNumber(marketWeight, 4) ?? 0,
   averageClobSpread: roundNumber(averageClobSpread, 6),
 
-  assumptions: [
+        assumptions: [
         "Outcome ranges are treated as lower-inclusive and upper-exclusive.",
         "The forecast horizon is restricted to the remaining part of the current Hong Kong calendar day.",
         "The daily maximum cannot finish below the maximum already observed by HKO.",
