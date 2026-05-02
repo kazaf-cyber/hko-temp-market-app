@@ -3,6 +3,7 @@ import { checkAdminSecret } from "@/lib/auth";
 import { initDatabase } from "@/lib/db";
 import { defaultMarketState } from "@/lib/defaults";
 import { saveMarketState } from "@/lib/state";
+import { initPaperTradingDatabase } from "@/lib/paperTradingDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
 
   try {
     await initDatabase();
+    await initPaperTradingDatabase();
     await saveMarketState(defaultMarketState);
 
     return NextResponse.json({
