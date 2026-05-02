@@ -700,7 +700,6 @@ function getClobSpread(value: unknown) {
 
   return null;
 }
-}
 
 function getClobGammaPrice(value: unknown) {
   return getFirstNormalizedPriceField(value, [
