@@ -297,6 +297,10 @@ function probabilityToPct(value: number | null): number | null {
   return Math.round(clampProbability(value) * 10000) / 100;
 }
 
+function roundProbability(value: number): number {
+  return Math.round(clampProbability(value) * 10000) / 10000;
+}
+
 function complementProbability(value: number | null): number | null {
   if (value === null) {
     return null;
@@ -304,6 +308,7 @@ function complementProbability(value: number | null): number | null {
 
   return roundProbability(1 - value);
 }
+
 function getEffectiveMarketWeight(
   probabilityContext: ProbabilityContext
 ): number {
