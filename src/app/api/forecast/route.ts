@@ -3,6 +3,7 @@ import { getForecast, type GetForecastOptions } from "@/lib/forecast";
 import { getPoeForecastCommentary } from "@/lib/poe";
 import { initDatabase, saveForecastRun } from "@/lib/db";
 import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
+import { enrichForecastWithTradeSignals } from "@/lib/trading/enrichForecast";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -4349,13 +4350,18 @@ function buildResultForHistory(
   aiCommentary: AiCommentary,
   state: MarketState | null = null
 ): ForecastResult {
-  /*
-    Save the normalized result shape too, so history display can use:
-      row.result.outcomeProbabilities
-      row.result.estimatedFinalMaxC
-      row.result.maxSoFarC
+  /* Save the normalized result shape too, so history display can use:
+     row.result.outcomeProbabilities
+     row.result.estimatedFinalMaxC
+     row.result.maxSoFarC
+
+     v3 edge engine:
+     Also save executable tradeSignals so later backtest / calibration can use
+     the same signal snapshot that the UI saw.
   */
-  return normalizeForecastResultForPage(forecast, aiCommentary, state);
+  return enrichForecastWithTradeSignals(
+    normalizeForecastResultForPage(forecast, aiCommentary, state)
+  ) as unknown as ForecastResult;
 }
 
 async function ensureDatabaseInitialized() {
@@ -4432,11 +4438,13 @@ function buildForecastPayload(params: {
   /*
     Normalize into the exact shape page.tsx expects.
   */
-  const resultForDisplay = normalizeForecastResultForPage(
+  const resultForDisplay = enrichForecastWithTradeSignals(
+  normalizeForecastResultForPage(
     params.forecast,
     params.aiCommentary,
     params.state ?? null
-  );
+  )
+);
 
   const resultRecord = resultForDisplay as unknown as Record<string, unknown>;
 
@@ -4496,12 +4504,17 @@ function buildForecastPayload(params: {
     /*
       Forecast top-level fields for debugging / older clients.
     */
-    outcomes: resultRecord.outcomes ?? [],
-    probabilities:
-      resultRecord.outcomeProbabilities ?? resultRecord.probabilities ?? [],
-    outcomeProbabilities: resultRecord.outcomeProbabilities ?? [],
-    topOutcome: resultRecord.topOutcome ?? null,
-    summary: resultRecord.summary ?? null,
+   outcomes: resultRecord.outcomes ?? [],
+probabilities: resultRecord.outcomeProbabilities ?? resultRecord.probabilities ?? [],
+outcomeProbabilities: resultRecord.outcomeProbabilities ?? [],
+
+/* v3 edge-engine top-level aliases. */
+tradeSignals: resultRecord.tradeSignals ?? [],
+tradingSignals: resultRecord.tradingSignals ?? resultRecord.tradeSignals ?? [],
+topTradeSignal: resultRecord.topTradeSignal ?? null,
+
+topOutcome: resultRecord.topOutcome ?? null,
+summary: resultRecord.summary ?? null,
     weather: weatherForDisplay,
     model: resultRecord.model ?? null,
     diagnostics: resultRecord.diagnostics ?? null,
@@ -4642,11 +4655,9 @@ async function runForecast(options: RunForecastOptions) {
         Give Poe the same normalized / repaired data that the UI sees.
         Otherwise Poe may analyse raw missing / impossible probabilities.
       */
-      const normalizedForAi = normalizeForecastResultForPage(
-        forecast,
-        null,
-        options.state ?? null
-      );
+      const normalizedForAi = enrichForecastWithTradeSignals(
+      normalizeForecastResultForPage(forecast, null, options.state ?? null)
+       );
 
       const forecastForAi = {
         ...(normalizedForAi as unknown as Record<string, unknown>),
