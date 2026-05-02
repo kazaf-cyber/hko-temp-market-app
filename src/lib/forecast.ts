@@ -543,26 +543,36 @@ function getOutcomeGammaPrice(outcome: OutcomeRange) {
   ]);
 }
 
-function getClobMidpoint(value: unknown) {
+function getClobNoAskPrice(value: unknown) {
   return getFirstNormalizedPriceField(value, [
     /*
-      Names used by route.ts / UI normalization.
+      NO-side ask aliases.
+      For a binary market:
+        YES bid ≈ 1 - NO ask
     */
-    "clobMidpoint",
-    "clobMid",
+    "noAsk",
+    "noBestAsk",
+    "noBestAskPrice",
+    "noAskPrice",
+    "noSellPrice",
 
     /*
-      Generic CLOB aliases.
+      CLOB-specific aliases.
     */
-    "midpoint",
-    "mid",
-    "midPrice",
-    "markPrice"
+    "clobNoAsk",
+    "clobNoBestAsk",
+    "clobNoBestAskPrice",
+
+    /*
+      Generic nested-ish aliases that may have been flattened upstream.
+    */
+    "marketNoAsk",
+    "polymarketNoAsk"
   ]);
 }
 
 function getClobBuyPrice(value: unknown) {
-  return getFirstNormalizedPriceField(value, [
+  const directBid = getFirstNormalizedPriceField(value, [
     /*
       Names used by route.ts / UI normalization.
     */
@@ -575,10 +585,33 @@ function getClobBuyPrice(value: unknown) {
     "bestBidPrice",
     "bid",
     "buyPrice",
+
+    /*
+      YES-side bid aliases.
+    */
     "yesBid",
     "yesBestBid",
-    "yesBestBidPrice"
+    "yesBestBidPrice",
+    "yesBidPrice",
+    "yesBuyPrice",
+    "clobYesBid"
   ]);
+
+  if (directBid !== null) {
+    return directBid;
+  }
+
+  /*
+    Polymarket UI often provides Buy No. For a binary market:
+      YES bid = 1 - NO ask
+  */
+  const noAsk = getClobNoAskPrice(value);
+
+  if (noAsk !== null) {
+    return normalizePrice(1 - noAsk);
+  }
+
+  return null;
 }
 
 function getClobSellPrice(value: unknown) {
@@ -595,10 +628,48 @@ function getClobSellPrice(value: unknown) {
     "bestAskPrice",
     "ask",
     "sellPrice",
+
+    /*
+      YES-side ask aliases.
+    */
     "yesAsk",
     "yesBestAsk",
-    "yesBestAskPrice"
+    "yesBestAskPrice",
+    "yesAskPrice",
+    "yesSellPrice",
+    "clobYesAsk"
   ]);
+}
+
+function getClobMidpoint(value: unknown) {
+  const directMidpoint = getFirstNormalizedPriceField(value, [
+    /*
+      Names used by route.ts / UI normalization.
+    */
+    "clobMidpoint",
+    "clobMid",
+
+    /*
+      Generic CLOB aliases.
+    */
+    "midpoint",
+    "mid",
+    "midPrice",
+    "markPrice"
+  ]);
+
+  if (directMidpoint !== null) {
+    return directMidpoint;
+  }
+
+  const buyPrice = getClobBuyPrice(value);
+  const sellPrice = getClobSellPrice(value);
+
+  if (buyPrice !== null && sellPrice !== null) {
+    return normalizePrice((buyPrice + sellPrice) / 2);
+  }
+
+  return null;
 }
 
 function getClobSpread(value: unknown) {
@@ -628,6 +699,7 @@ function getClobSpread(value: unknown) {
   }
 
   return null;
+}
 }
 
 function getClobGammaPrice(value: unknown) {
@@ -2223,7 +2295,7 @@ const marketCoverageStats = getMarketCoverageStats(prepared);
 
 const marketProbabilitiesAvailable = marketCoverageStats.available;
 
-  const marketProbabilities = marketProbabilitiesAvailable
+  const marketBlendProbabilities = marketProbabilitiesAvailable
   ? normalizeScores(
       prepared.map((item) => item.marketRawPrice ?? 0),
       eligible
@@ -2237,24 +2309,30 @@ const marketProbabilitiesAvailable = marketCoverageStats.available;
     marketWeightOverride: params.options?.marketWeightOverride
   });
 
-  const finalScores = prepared.map((item, index) => {
-  if (item.impossible) return 0;
+ const finalScores = prepared.map((item, index) => {
+    if (item.impossible) return 0;
 
-  const weatherProbability = weatherProbabilities[index] ?? 0;
-  const marketProbability =
-    typeof marketProbabilities[index] === "number"
-      ? (marketProbabilities[index] as number)
-      : null;
+    const weatherProbability = weatherProbabilities[index] ?? 0;
 
-  if (marketWeight > 0 && marketProbability !== null) {
-    return (
-      weatherProbability * (1 - marketWeight) +
-      marketProbability * marketWeight
-    );
-  }
+    /*
+      Internal blend probability:
+      This is normalized across eligible outcomes so the final distribution
+      sums to 1. It is NOT the value we should display as the Polymarket price.
+    */
+    const marketBlendProbability =
+      typeof marketBlendProbabilities[index] === "number"
+        ? (marketBlendProbabilities[index] as number)
+        : null;
 
-  return weatherProbability;
-});
+    if (marketWeight > 0 && marketBlendProbability !== null) {
+      return (
+        weatherProbability * (1 - marketWeight) +
+        marketBlendProbability * marketWeight
+      );
+    }
+
+    return weatherProbability;
+  });
 
   const finalProbabilities = normalizeScores(finalScores, eligible);
 
@@ -2274,10 +2352,13 @@ const marketProbabilitiesAvailable = marketCoverageStats.available;
   const outcomes: ForecastOutcome[] = prepared.map((item, index) => {
     const probability = finalProbabilities[index] ?? 0;
     const weatherProbability = weatherProbabilities[index] ?? 0;
-    const marketProbability =
-      typeof marketProbabilities[index] === "number"
-        ? (marketProbabilities[index] as number)
-        : null;
+    /*
+      Display market probability:
+      This should be the raw Polymarket-implied price, usually CLOB midpoint
+      or Gamma YES price. It should NOT be the normalized distribution used for
+      internal blending.
+    */
+    const marketRawPriceRounded = roundNumber(item.marketRawPrice, 8);
 
     const probabilityRounded = roundNumber(probability, 8) ?? 0;
     const probabilityPctRounded = roundNumber(probability * 100, 4) ?? 0;
@@ -2287,11 +2368,11 @@ const marketProbabilitiesAvailable = marketCoverageStats.available;
     const weatherProbabilityPctRounded =
       roundNumber(weatherProbability * 100, 4) ?? 0;
 
-    const marketProbabilityRounded = roundNumber(marketProbability, 8);
+    const marketProbabilityRounded = marketRawPriceRounded;
     const marketProbabilityPctRounded =
-      marketProbability === null
+      marketProbabilityRounded === null
         ? null
-        : roundNumber(marketProbability * 100, 4);
+        : roundNumber(marketProbabilityRounded * 100, 4);
 
     const clobMidpointValue =
   getClobMidpoint(item.clob) ?? getClobMidpoint(item.outcome);
@@ -2358,7 +2439,7 @@ const gammaProbability = roundNumber(
       polymarketProbability: marketProbabilityRounded,
       polymarketProbabilityPct: marketProbabilityPctRounded,
 
-      marketRawPrice: roundNumber(item.marketRawPrice, 8),
+      marketRawPrice: marketRawPriceRounded,
 
       clobMidpoint: roundNumber(clobMidpointValue, 8),
       clobSpread: roundNumber(clobSpreadValue, 8),
