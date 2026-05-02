@@ -1476,6 +1476,33 @@ export default function PaperTradingPanel() {
             writes to the paper ledger via your server APIs. It does not place
             real exchange orders.
           </p>
+          <div
+  style={{
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 8
+  }}
+>
+  <a
+    href="/admin/paper-trading/performance"
+    style={{
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 12,
+      padding: "10px 14px",
+      background: "#ffffff",
+      border: "1px solid #cbd5e1",
+      color: "#334155",
+      fontSize: 14,
+      fontWeight: 850,
+      textDecoration: "none"
+    }}
+  >
+    Open performance analytics →
+  </a>
+</div>
         </header>
 
         {error ? (
