@@ -75,22 +75,6 @@ function firstNumber(values: Array<number | null | undefined>) {
   );
 }
 
-function hasClobTokenIds(outcomes: OutcomeRange[] | null | undefined) {
-  return Boolean(
-    outcomes?.some((outcome) => {
-      const record = outcome as unknown as Record<string, unknown>;
-
-      return [
-        record.yesTokenId,
-        record.noTokenId,
-        record.clobTokenId,
-        record.tokenId,
-        record.assetId,
-        record.yesAssetId
-      ].some((value) => typeof value === "string" && value.trim().length > 0);
-    })
-  );
-}
 
 function nextHoursOpenMeteo(openMeteo: OpenMeteoForecast | null, hours: number) {
   if (!openMeteo) return [];
@@ -244,22 +228,28 @@ export async function getMultiChannelSnapshot(params?: {
       let outcomes = params.outcomes ?? [];
 
       /*
-        If the current outcome rows exist but do not contain CLOB token IDs,
-        hydrate them from the Polymarket event URL/slug when available.
+        If a Polymarket URL / slug is provided, treat it as the source of truth
+        for the current event.
+
+        This is important for daily markets like:
+          "Highest temperature in Hong Kong on May 3?"
+
+        The Admin / DB state may still contain token IDs from May 1 / May 2.
+        If we reuse those stale token IDs, the labels can look correct but the
+        prices will come from the wrong event.
       */
-      if (
-        (!outcomes.length || !hasClobTokenIds(outcomes)) &&
-        params.polymarketUrl
-      ) {
+      if (params.polymarketUrl) {
         const polymarket = await getPolymarketOutcomesFromInput(
           params.polymarketUrl
         );
 
         outcomes = polymarket.outcomes;
+      } else if (!outcomes.length) {
+        outcomes = (await getMarketState()).state.outcomes;
       }
 
       if (!outcomes.length) {
-        outcomes = (await getMarketState()).state.outcomes;
+        throw new Error("No Polymarket outcomes are available for CLOB lookup.");
       }
 
       polymarketClob = await getPolymarketClobSnapshot(outcomes);
