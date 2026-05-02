@@ -142,16 +142,27 @@ export function buildOutcomeTradeSignal(input: OutcomeTradeInputs): OutcomeTrade
     priceQuality === "GOOD" &&
     (input.resolutionConfidence ?? 0.95) >= 0.9;
 
+  /**
+   * Use local variables so TypeScript can narrow number | null to number.
+   *
+   * Important:
+   * yesTradable/noTradable are plain booleans. TypeScript does not reliably
+   * carry object-property null checks through derived boolean constants, so
+   * entryPrice must use explicitly narrowed local variables.
+   */
+  const yesEntryPrice = input.yesAsk;
+  const noEntryPrice = input.noAsk;
+
   const yesTradable =
     commonTradeGate &&
     yesEdge !== null &&
-    input.yesAsk !== null &&
+    yesEntryPrice !== null &&
     yesEdge > requiredEdge;
 
   const noTradable =
     commonTradeGate &&
     noEdge !== null &&
-    input.noAsk !== null &&
+    noEntryPrice !== null &&
     noEdge > requiredEdge;
 
   let side: TradeSide = "NO_TRADE";
@@ -159,27 +170,32 @@ export function buildOutcomeTradeSignal(input: OutcomeTradeInputs): OutcomeTrade
   let strength: SignalStrength = "NONE";
   let recommendedStakeFraction = 0;
 
-  if (yesTradable && (!noTradable || (yesEdge ?? -Infinity) >= (noEdge ?? -Infinity))) {
+  if (
+    yesTradable &&
+    yesEdge !== null &&
+    yesEntryPrice !== null &&
+    (!noTradable || yesEdge >= (noEdge ?? -Infinity))
+  ) {
     side = "BUY_YES";
     bestEdge = yesEdge;
     strength = getStrength(yesEdge, requiredEdge);
 
     recommendedStakeFraction = calculateKellyFraction({
       probability: modelProbability,
-      entryPrice: input.yesAsk,
+      entryPrice: yesEntryPrice,
       kellyMultiplier: 0.25,
       maxFraction: getStakeCap(strength)
     });
 
     reasons.push("YES executable edge exceeds required edge.");
-  } else if (noTradable && noEdge !== null && input.noAsk !== null) {
+  } else if (noTradable && noEdge !== null && noEntryPrice !== null) {
     side = "BUY_NO";
     bestEdge = noEdge;
     strength = getStrength(noEdge, requiredEdge);
 
     recommendedStakeFraction = calculateKellyFraction({
       probability: modelNoProbability,
-      entryPrice: input.noAsk,
+      entryPrice: noEntryPrice,
       kellyMultiplier: 0.25,
       maxFraction: getStakeCap(strength)
     });
