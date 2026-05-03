@@ -4573,10 +4573,10 @@ async function runForecast(options: RunForecastOptions) {
         options.state ?? null,
       );
 
-      const normalizedForAi = applyLlmStructuredAdjustment(
-        normalizedForAiBase,
-        structuredAdjustment,
-      );
+     const normalizedForAi = applyPoeStructuredAdjustment(
+     normalizedForAiBase,
+     structuredAdjustment,
+    );
 
       const forecastForAi = {
         ...(normalizedForAi as unknown as Record<string, unknown>),
