@@ -4,7 +4,6 @@ import { getPoeForecastCommentary } from "@/lib/poe";
 import { initDatabase, saveForecastRun } from "@/lib/db";
 import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 import { enrichForecastWithTradeSignals } from "@/lib/trading/enrichForecast";
-import { applyLlmStructuredAdjustment, getLlmStructuredAdjustment, type LlmStructuredAdjustmentRun } from "@/lib/llmStructuredAdjustment";
 import {
   applyPoeStructuredAdjustment,
   getPoeStructuredAdjustment,
@@ -41,14 +40,6 @@ type RunForecastOptions = GetForecastOptions & {
    * Phase 4:
    * Let Poe produce a strict-ish structured probability adjustment.
    * Default false to avoid unexpected Poe point usage.
-   */
-  structuredAdjustment?: boolean;
-};
-
-  /**
-   * Phase 4:
-   * Let an LLM produce a strict structured probability adjustment.
-   * Default false to avoid unexpected quota usage.
    */
   structuredAdjustment?: boolean;
 };
@@ -4404,16 +4395,17 @@ async function saveHistoryIfRequested(params: {
   aiCommentary: AiCommentary;
   structuredAdjustment: PoeStructuredAdjustmentRun | null;
 }): Promise<HistorySaveResult> {
+  if (!params.saveHistory) {
     return {
       saved: false,
-      reason: "History save was not requested."
+      reason: "History save was not requested.",
     };
   }
 
   if (!params.state) {
     return {
       saved: false,
-      reason: "Market state was not provided, so history was not saved."
+      reason: "Market state was not provided, so history was not saved.",
     };
   }
 
@@ -4426,18 +4418,21 @@ async function saveHistoryIfRequested(params: {
     */
     await ensureDatabaseInitialized();
 
-  const resultForHistory = buildResultForHistory(
-  params.forecast,
-  params.aiCommentary,
-  params.state,
-  params.structuredAdjustment,
-);
+    const resultForHistory = buildResultForHistory(
+      params.forecast,
+      params.aiCommentary,
+      params.state,
+      params.structuredAdjustment,
+    );
 
     return await saveForecastRun({
       hktDate: getForecastHktDate(params.forecast),
       state: params.state,
-      weather: getAt(params.forecast, ["weather"]) as unknown as HkoWeatherSnapshot,
-      result: resultForHistory
+      weather: getAt(
+        params.forecast,
+        ["weather"],
+      ) as unknown as HkoWeatherSnapshot,
+      result: resultForHistory,
     });
   } catch (error) {
     console.error("Forecast history save error:", error);
@@ -4447,242 +4442,121 @@ async function saveHistoryIfRequested(params: {
       reason:
         error instanceof Error
           ? error.message
-          : "Failed to save forecast history."
+          : "Failed to save forecast history.",
     };
   }
 }
 
-function buildForecastPayload(params: {
-  forecast: Forecast;
-  aiCommentary: AiCommentary;
-  historySave: HistorySaveResult;
-  state?: MarketState | null;
-  structuredAdjustment: PoeStructuredAdjustmentRun | null;
-}) {
-  /*
-    Normalize into the exact shape page.tsx expects.
-  */
-  const normalizedForDisplay = normalizeForecastResultForPage(
-  params.forecast,
-  params.aiCommentary,
-  params.state ?? null,
-);
+async function runForecast(options: RunForecastOptions) {
+  const forecast = await getForecast(options);
 
-const adjustedForDisplay = applyLlmStructuredAdjustment(
-  normalizedForDisplay,
-  params.structuredAdjustment,
-);
+  let structuredAdjustment: PoeStructuredAdjustmentRun | null = null;
 
-const normalizedForDisplay = normalizeForecastResultForPage(
-  params.forecast,
-  params.aiCommentary,
-  params.state ?? null,
-);
+  if (options.structuredAdjustment) {
+    try {
+      /**
+       * Phase 4 should read the same normalized / repaired data
+       * that the UI sees.
+       */
+      const normalizedForAdjustment = normalizeForecastResultForPage(
+        forecast,
+        null,
+        options.state ?? null,
+      );
 
-const adjustedForDisplay = applyPoeStructuredAdjustment(
-  normalizedForDisplay,
-  params.structuredAdjustment,
-);
+      structuredAdjustment = await getPoeStructuredAdjustment(
+        normalizedForAdjustment,
+      );
+    } catch (error) {
+      console.error("Poe structured adjustment error:", error);
 
+      structuredAdjustment = {
+        enabled: true,
+        applied: false,
+        model:
+          process.env.POE_STRUCTURED_ADJUSTMENT_MODEL ??
+          process.env.POE_MODEL ??
+          null,
+        adjustment: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Poe structured adjustment failed.",
+        rawText: null,
+      };
+    }
+  }
 
-  const resultRecord = resultForDisplay as unknown as Record<string, unknown>;
+  let aiCommentary: AiCommentary = null;
 
-  const generatedAt =
-    firstString(resultRecord.generatedAt) ?? new Date().toISOString();
+  if (options.ai) {
+    try {
+      /**
+       * Give Poe commentary the same normalized / repaired / Phase-4-adjusted data
+       * that the UI sees. Otherwise commentary may explain pre-adjusted probabilities.
+       */
+      const normalizedForAiBase = normalizeForecastResultForPage(
+        forecast,
+        null,
+        options.state ?? null,
+      );
 
-  const aiExplanation =
-    firstString(resultRecord.aiExplanation) ??
-    getAiExplanationText(params.aiCommentary);
+      const normalizedForAi = applyPoeStructuredAdjustment(
+        normalizedForAiBase,
+        structuredAdjustment,
+      );
 
-  const weatherForDisplay = (resultRecord.weather ??
-    getAt(params.forecast, ["weather"]) ??
-    {}) as HkoWeatherSnapshot;
+      const forecastForAi = {
+        ...(normalizedForAi as unknown as Record<string, unknown>),
+        aiInputMode: "multi_channel_forecast_json",
+        multiChannelForecastJson: buildMultiChannelForecastJson(
+          normalizedForAi,
+        ),
+        diagnostics: {
+          ...recordOrEmpty(
+            (normalizedForAi as unknown as Record<string, unknown>).diagnostics,
+          ),
+          aiInputMode: "multi_channel_forecast_json",
+          poeInstruction:
+            "Use only the supplied outcomeUniverse and outcomeProbabilities. Do not invent buckets such as '22°C or higher' unless it appears in outcomeUniverse.",
+        },
+      } as unknown as Forecast;
 
-  const multiChannelForecastJson =
-    buildMultiChannelForecastJson(resultForDisplay);
+      aiCommentary = await getPoeForecastCommentary(forecastForAi);
 
-  const data = {
-  ...resultRecord,
+      if (!getAiExplanationText(aiCommentary)) {
+        aiCommentary = {
+          explanation:
+            "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape.",
+        };
+      }
+    } catch (error) {
+      console.error("Poe AI commentary error:", error);
 
-  result: resultForDisplay,
-  forecast: resultForDisplay,
-  weather: weatherForDisplay,
-  multiChannelForecastJson,
+      aiCommentary = {
+        explanation:
+          error instanceof Error
+            ? `Poe AI explanation failed: ${error.message}`
+            : "Poe AI explanation failed.",
+      };
+    }
+  }
 
-  ai: params.aiCommentary,
-  aiCommentary: params.aiCommentary,
-  aiExplanation,
+  const historySave = await saveHistoryIfRequested({
+    saveHistory: Boolean(options.saveHistory),
+    state: options.state ?? null,
+    forecast,
+    aiCommentary,
+    structuredAdjustment,
+  });
 
-  poeStructuredAdjustment: params.structuredAdjustment,
-  structuredAdjustment: params.structuredAdjustment,
-  phase4PoeAdjustment:
-    (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
-      ?.phase4PoeAdjustment ?? null,
-  phase4LlmAdjustment:
-    (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
-      ?.phase4LlmAdjustment ?? null,
-
-  historySave: params.historySave,
-};
-  return {
-    ok: true,
-    generatedAt,
-
-    /*
-      Main response shape used by page.tsx.
-    */
-    data,
-
-    /*
-      Top-level aliases for compatibility.
-    */
-    forecast: resultForDisplay,
-    result: resultForDisplay,
-    structuredAdjustment: params.structuredAdjustment,
-    phase4LlmAdjustment:
-    (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
-    ?.phase4LlmAdjustment ?? null,
-    /*
-      Forecast top-level fields for debugging / older clients.
-    */
-   outcomes: resultRecord.outcomes ?? [],
-   probabilities: resultRecord.outcomeProbabilities ?? resultRecord.probabilities ?? [],
-   outcomeProbabilities: resultRecord.outcomeProbabilities ?? [],
-
-/* v3 edge-engine top-level aliases. */
-tradeSignals: resultRecord.tradeSignals ?? [],
-tradingSignals: resultRecord.tradingSignals ?? resultRecord.tradeSignals ?? [],
-topTradeSignal: resultRecord.topTradeSignal ?? null,
-
-topOutcome: resultRecord.topOutcome ?? null,
-summary: resultRecord.summary ?? null,
-    weather: weatherForDisplay,
-    model: resultRecord.model ?? null,
-    diagnostics: resultRecord.diagnostics ?? null,
-    estimatedFinalMaxC: resultRecord.estimatedFinalMaxC ?? null,
-    estimatedFinalDailyMaxC: resultRecord.estimatedFinalDailyMaxC ?? null,
-    estimatedFinalDailyMax: resultRecord.estimatedFinalDailyMax ?? null,
-    maxSoFarC: resultRecord.maxSoFarC ?? null,
-    maxSoFarSource: resultRecord.maxSoFarSource ?? null,
-
-    observedMaxLowerBoundC:
-      resultRecord.observedMaxLowerBoundC ??
-      resultRecord.observedFinalMaxLowerBoundC ??
-      resultRecord.maxSoFarC ??
-      null,
-
-    observedFinalMaxLowerBoundC:
-      resultRecord.observedFinalMaxLowerBoundC ??
-      resultRecord.observedMaxLowerBoundC ??
-      resultRecord.maxSoFarC ??
-      null,
-
-    hkoCurrentTempC:
-      resultRecord.hkoCurrentTempC ??
-      getAt(weatherForDisplay, ["current", "hkoCurrentTempC"]) ??
-      getAt(weatherForDisplay, ["hkoCurrentTempC"]) ??
-      getAt(weatherForDisplay, ["currentTempC"]) ??
-      null,
-
-    hkoMaxSinceMidnightC:
-      resultRecord.hkoMaxSinceMidnightC ??
-      getAt(weatherForDisplay, ["sinceMidnight", "maxTempC"]) ??
-      getAt(weatherForDisplay, ["hkoMaxSinceMidnightC"]) ??
-      getAt(weatherForDisplay, ["maxSinceMidnightC"]) ??
-      resultRecord.maxSoFarC ??
-      null,
-
-    hkoMinSinceMidnightC:
-      resultRecord.hkoMinSinceMidnightC ??
-      resultRecord.minSinceMidnightC ??
-      getAt(weatherForDisplay, ["sinceMidnight", "minTempC"]) ??
-      getAt(weatherForDisplay, ["sinceMidnight", "minTemperatureC"]) ??
-      getAt(weatherForDisplay, ["hkoMinSinceMidnightC"]) ??
-      getAt(weatherForDisplay, ["minSinceMidnightC"]) ??
-      getAt(weatherForDisplay, ["hko", "hkoMinSinceMidnightC"]) ??
-      getAt(weatherForDisplay, ["hko", "minSinceMidnightC"]) ??
-      null,
-
-    minSinceMidnightC:
-      resultRecord.minSinceMidnightC ??
-      resultRecord.hkoMinSinceMidnightC ??
-      getAt(weatherForDisplay, ["sinceMidnight", "minTempC"]) ??
-      getAt(weatherForDisplay, ["hkoMinSinceMidnightC"]) ??
-      getAt(weatherForDisplay, ["minSinceMidnightC"]) ??
-      null,
-
-    officialForecastMaxC:
-      resultRecord.officialForecastMaxC ??
-      resultRecord.hkoOfficialForecastMaxC ??
-      resultRecord.forecastMaxC ??
-      getAt(weatherForDisplay, ["officialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["hkoOfficialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["forecastMaxC"]) ??
-      getAt(weatherForDisplay, ["hko", "officialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["hko", "hkoOfficialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["hko", "forecastMaxC"]) ??
-      null,
-
-    hkoOfficialForecastMaxC:
-      resultRecord.hkoOfficialForecastMaxC ??
-      resultRecord.officialForecastMaxC ??
-      resultRecord.forecastMaxC ??
-      getAt(weatherForDisplay, ["hkoOfficialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["officialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["forecastMaxC"]) ??
-      null,
-
-    forecastMaxC:
-      resultRecord.forecastMaxC ??
-      resultRecord.officialForecastMaxC ??
-      resultRecord.hkoOfficialForecastMaxC ??
-      getAt(weatherForDisplay, ["forecastMaxC"]) ??
-      getAt(weatherForDisplay, ["officialForecastMaxC"]) ??
-      getAt(weatherForDisplay, ["hkoOfficialForecastMaxC"]) ??
-      null,
-
-    hourlyRainfallMm:
-      resultRecord.hourlyRainfallMm ??
-      resultRecord.rainfallLastHourMm ??
-      resultRecord.rainfallPastHourMm ??
-      getAt(weatherForDisplay, ["hourlyRainfallMm"]) ??
-      getAt(weatherForDisplay, ["rainfallLastHourMm"]) ??
-      getAt(weatherForDisplay, ["rainfallPastHourMm"]) ??
-      getAt(weatherForDisplay, ["rainHourlyMm"]) ??
-      getAt(weatherForDisplay, ["hko", "hourlyRainfallMm"]) ??
-      getAt(weatherForDisplay, ["hko", "rainfallLastHourMm"]) ??
-      null,
-
-    rainfallLastHourMm:
-      resultRecord.rainfallLastHourMm ??
-      resultRecord.hourlyRainfallMm ??
-      getAt(weatherForDisplay, ["rainfallLastHourMm"]) ??
-      getAt(weatherForDisplay, ["hourlyRainfallMm"]) ??
-      null,
-
-    rainfallPastHourMm:
-      resultRecord.rainfallPastHourMm ??
-      resultRecord.hourlyRainfallMm ??
-      getAt(weatherForDisplay, ["rainfallPastHourMm"]) ??
-      getAt(weatherForDisplay, ["hourlyRainfallMm"]) ??
-      null,
-
-    keyDrivers: resultRecord.keyDrivers ?? [],
-    warnings: resultRecord.warnings ?? [],
-    confidence: resultRecord.confidence ?? null,
-
-    /*
-      Poe AI top-level aliases.
-    */
-    ai: params.aiCommentary,
-    aiCommentary: params.aiCommentary,
-    aiExplanation,
-
-    /*
-      History save top-level alias.
-    */
-    historySave: params.historySave
-  };
+  return buildForecastPayload({
+    forecast,
+    aiCommentary,
+    historySave,
+    state: options.state ?? null,
+    structuredAdjustment,
+  });
 }
 
 async function runForecast(options: RunForecastOptions) {
@@ -4805,34 +4679,41 @@ export async function GET(request: Request) {
     const debug = parseBoolean(url.searchParams.get("debug"), false);
 
     /*
-      Keep AI always enabled for now because the UI is expecting explanation.
-      If you later want the checkbox to fully control Poe usage, change this
-      to parseBoolean(url.searchParams.get("ai"), false).
+      Keep AI enabled by default because the UI expects an explanation.
+      You can disable with ?ai=false.
     */
     const ai = parseBoolean(
-  url.searchParams.get("ai") ?? url.searchParams.get("forceAI"),
-  true,
-);
+      url.searchParams.get("ai") ?? url.searchParams.get("forceAI"),
+      true,
+    );
+
+    const structuredAdjustment = parseBoolean(
+      url.searchParams.get("structuredAdjustment") ??
+        url.searchParams.get("poeStructuredAdjustment") ??
+        url.searchParams.get("llmAdjustment") ??
+        url.searchParams.get("phase4"),
+      false,
+    );
 
     const marketWeightOverride =
       parseNumber(url.searchParams.get("marketWeight")) ??
       parseNumber(url.searchParams.get("marketWeightOverride"));
 
     const payload = await runForecast({
-  includeClob,
-  blendMarket,
-  includeRawSnapshot: debug,
-  marketWeightOverride,
-  ai,
-  structuredAdjustment,
-  saveHistory: false,
-  state: null,
-  });
+      includeClob,
+      blendMarket,
+      includeRawSnapshot: debug,
+      marketWeightOverride,
+      ai,
+      structuredAdjustment,
+      saveHistory: false,
+      state: null,
+    });
 
     return NextResponse.json(payload, {
       headers: {
-        "Cache-Control": "no-store, max-age=0"
-      }
+        "Cache-Control": "no-store, max-age=0",
+      },
     });
   } catch (error) {
     console.error("Forecast API error:", error);
@@ -4843,14 +4724,14 @@ export async function GET(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Failed to generate multi-channel forecast."
+            : "Failed to generate multi-channel forecast.",
       },
       {
         status: 500,
         headers: {
-          "Cache-Control": "no-store, max-age=0"
-        }
-      }
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
     );
   }
 }
@@ -4877,21 +4758,28 @@ export async function POST(request: Request) {
     const debug = parseBoolean(body.debug, false);
 
     /*
-      Keep AI always enabled for now.
-
-      Your page.tsx sends forceAI, but the previous route was already hardcoded
-      to true. This keeps behaviour consistent and avoids the UI silently saying
-      "AI explanation disabled or not available."
+      Keep AI enabled by default because the UI expects an explanation.
+      Body takes priority, query string is fallback.
     */
     const ai = parseBoolean(
-  url.searchParams.get("ai") ?? url.searchParams.get("forceAI"),
-  true,
-);
+      body.ai ??
+        body.forceAI ??
+        url.searchParams.get("ai") ??
+        url.searchParams.get("forceAI"),
+      true,
+    );
 
-const structuredAdjustment = parseBoolean(
-  body.structuredAdjustment ?? body.llmAdjustment ?? body.phase4,
-  false,
-);
+    const structuredAdjustment = parseBoolean(
+      body.structuredAdjustment ??
+        body.poeStructuredAdjustment ??
+        body.llmAdjustment ??
+        body.phase4 ??
+        url.searchParams.get("structuredAdjustment") ??
+        url.searchParams.get("poeStructuredAdjustment") ??
+        url.searchParams.get("llmAdjustment") ??
+        url.searchParams.get("phase4"),
+      false,
+    );
 
     const state = parseMarketState(body.state);
     const saveHistory = parseBoolean(body.saveHistory, false);
@@ -4903,21 +4791,20 @@ const structuredAdjustment = parseBoolean(
       parseNumber(url.searchParams.get("marketWeightOverride"));
 
     const payload = await runForecast({
-  includeClob,
-  blendMarket,
-  includeRawSnapshot: debug,
-  marketWeightOverride,
-  ai,
-  structuredAdjustment,
-  saveHistory,
-  state,
-  });
-
+      includeClob,
+      blendMarket,
+      includeRawSnapshot: debug,
+      marketWeightOverride,
+      ai,
+      structuredAdjustment,
+      saveHistory,
+      state,
+    });
 
     return NextResponse.json(payload, {
       headers: {
-        "Cache-Control": "no-store, max-age=0"
-      }
+        "Cache-Control": "no-store, max-age=0",
+      },
     });
   } catch (error) {
     console.error("Forecast API POST error:", error);
@@ -4928,14 +4815,14 @@ const structuredAdjustment = parseBoolean(
         error:
           error instanceof Error
             ? error.message
-            : "Failed to generate multi-channel forecast."
+            : "Failed to generate multi-channel forecast.",
       },
       {
         status: 500,
         headers: {
-          "Cache-Control": "no-store, max-age=0"
-        }
-      }
+          "Cache-Control": "no-store, max-age=0",
+        },
+      },
     );
   }
 }
