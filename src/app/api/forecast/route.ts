@@ -4487,8 +4487,6 @@ async function runForecast(options: RunForecastOptions) {
     }
   }
 
-  let aiCommentary: AiCommentary = null;
-
   if (options.ai) {
     try {
       /**
@@ -4540,79 +4538,7 @@ async function runForecast(options: RunForecastOptions) {
             : "Poe AI explanation failed.",
       };
     }
-  
-
-  const historySave = await saveHistoryIfRequested({
-    saveHistory: Boolean(options.saveHistory),
-    state: options.state ?? null,
-    forecast,
-    aiCommentary,
-    structuredAdjustment,
-  });
-
-  return buildForecastPayload({
-    forecast,
-    aiCommentary,
-    historySave,
-    state: options.state ?? null,
-    structuredAdjustment,
-  });
-}
-
-  let aiCommentary: AiCommentary = null;
-
-  if (options.ai) {
-    try {
-      /**
-       * Give Poe the same normalized / repaired / Phase-4-adjusted data
-       * that the UI sees. Otherwise Poe may explain pre-adjusted probabilities.
-       */
-      const normalizedForAiBase = normalizeForecastResultForPage(
-        forecast,
-        null,
-        options.state ?? null,
-      );
-
-     const normalizedForAi = applyPoeStructuredAdjustment(
-     normalizedForAiBase,
-     structuredAdjustment,
-    );
-
-      const forecastForAi = {
-        ...(normalizedForAi as unknown as Record<string, unknown>),
-        aiInputMode: "multi_channel_forecast_json",
-        multiChannelForecastJson: buildMultiChannelForecastJson(
-          normalizedForAi,
-        ),
-        diagnostics: {
-          ...recordOrEmpty(
-            (normalizedForAi as unknown as Record<string, unknown>).diagnostics,
-          ),
-          aiInputMode: "multi_channel_forecast_json",
-          poeInstruction:
-            "Use only the supplied outcomeUniverse and outcomeProbabilities. Do not invent buckets such as '22°C or higher' unless it appears in outcomeUniverse.",
-        },
-      } as unknown as Forecast;
-
-      aiCommentary = await getPoeForecastCommentary(forecastForAi);
-
-      if (!getAiExplanationText(aiCommentary)) {
-        aiCommentary = {
-          explanation:
-            "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape.",
-        };
-      }
-    } catch (error) {
-      console.error("Poe AI commentary error:", error);
-
-      aiCommentary = {
-        explanation:
-          error instanceof Error
-            ? `Poe AI explanation failed: ${error.message}`
-            : "Poe AI explanation failed.",
-      };
-    }
-  
+  }
 
   const historySave = await saveHistoryIfRequested({
     saveHistory: Boolean(options.saveHistory),
