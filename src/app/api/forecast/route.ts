@@ -4559,45 +4559,6 @@ async function runForecast(options: RunForecastOptions) {
   });
 }
 
-async function runForecast(options: RunForecastOptions) {
-  const forecast = await getForecast(options);
-
-  let structuredAdjustment: LlmStructuredAdjustmentRun | null = null;
-
-  if (options.structuredAdjustment) {
-    try {
-      /**
-       * Phase 4 adjustment should read the same normalized / repaired data
-       * that the UI sees.
-       */
-      const normalizedForAdjustment = normalizeForecastResultForPage(
-        forecast,
-        null,
-        options.state ?? null,
-      );
-
-      structuredAdjustment = await getLlmStructuredAdjustment(
-        normalizedForAdjustment,
-      );
-    } catch (error) {
-      console.error("LLM structured adjustment error:", error);
-
-      structuredAdjustment = {
-        enabled: true,
-        applied: false,
-        model:
-          process.env.OPENAI_STRUCTURED_ADJUSTMENT_MODEL ??
-          process.env.OPENAI_MODEL ??
-          null,
-        adjustment: null,
-        error:
-          error instanceof Error
-            ? error.message
-            : "LLM structured adjustment failed.",
-      };
-    }
-  }
-
   let aiCommentary: AiCommentary = null;
 
   if (options.ai) {
