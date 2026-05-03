@@ -1,11 +1,13 @@
-import {
-  getMultiChannelSnapshot,
-  type MultiChannelSnapshot
-} from "@/lib/multichannel";
+import { getMultiChannelSnapshot, type MultiChannelSnapshot } from "@/lib/multichannel";
 import { getMarketState } from "@/lib/state";
+import {
+  buildWeatherEvidenceFromSnapshot,
+  getWeatherEvidenceNetAdjustmentC,
+  type WeatherEvidence
+} from "@/lib/weatherEvidence";
 import type { MarketState, OutcomeRange } from "@/types";
 
-export const FORECAST_ENGINE_VERSION = "multi-channel-v2.1.0";
+export const FORECAST_ENGINE_VERSION = "multi-channel-v2.2.0-weather-evidence";
 
 type SourceError = {
   source: string;
@@ -88,11 +90,43 @@ export type ForecastWeatherInputs = {
   forecastFinalMaxStdDevC: number;
 
   rainProbabilityNext2hPct: number | null;
-  cloudCoverNowPct: number | null;
+rainProbabilityNext6hPct: number | null;
 
-  modelDisagreementC: number | null;
-  sourceCount: number;
-  adjustmentReasons: string[];
+precipitationNext2hMm: number | null;
+precipitationNext6hMm: number | null;
+precipitationRemainingDayMm: number | null;
+
+rainNext2hMm: number | null;
+rainNext6hMm: number | null;
+rainRemainingDayMm: number | null;
+
+cloudCoverNowPct: number | null;
+lowCloudNowPct: number | null;
+midCloudNowPct: number | null;
+highCloudNowPct: number | null;
+
+shortwaveNowWm2: number | null;
+shortwaveRemainingMeanWm2: number | null;
+shortwaveRemainingMaxWm2: number | null;
+shortwaveRemainingEnergyMjM2: number | null;
+
+solarHeatingScore: number;
+solarHeatingBonusC: number;
+cloudCoolingPenaltyC: number;
+
+rainCoolingScore: number;
+rainCoolingAdjustmentC: number;
+
+dewPointNowC: number | null;
+apparentTemperatureNowC: number | null;
+relativeHumidityNowPct: number | null;
+windSpeedNowKmh: number | null;
+windGustNowKmh: number | null;
+windDirectionNowDeg: number | null;
+
+modelDisagreementC: number | null;
+sourceCount: number;
+adjustmentReasons: string[];
 };
 
 export type ForecastOutcome = OutcomeRange & {
@@ -223,7 +257,7 @@ export type ForecastResult = {
   rainfallMm: number | null;
 
   weather: ForecastWeatherInputs;
-
+  weatherEvidence: WeatherEvidence;
   model: {
     method: "same-day-temperature-distribution-with-market-blend";
     rangeConvention: "lower-inclusive-upper-exclusive";
@@ -1188,32 +1222,43 @@ function getWindyRemainingDayMaxC(
 
 function estimateCoolingAdjustment(params: {
   rainProbabilityNext2hPct: number | null;
+  rainProbabilityNext6hPct?: number | null;
   cloudCoverNowPct: number | null;
   observedHourlyRainfallMm: number | null;
+
+  weatherEvidenceNetAdjustmentC?: number | null;
+  rainCoolingScore?: number;
+  cloudCoolingPenaltyC?: number;
+  solarHeatingBonusC?: number;
 }) {
   let cooling = 0;
   const reasons: string[] = [];
 
   const rainProbability = params.rainProbabilityNext2hPct;
+  const rainProbability6h = params.rainProbabilityNext6hPct ?? null;
   const cloudCover = params.cloudCoverNowPct;
   const rainfall = params.observedHourlyRainfallMm;
 
   if (rainProbability !== null) {
     if (rainProbability >= 80) {
       cooling += 0.35;
-      reasons.push(
-        "Very high near-term rain probability suppresses upside temperature risk."
-      );
+      reasons.push("Very high near-term rain probability suppresses upside temperature risk.");
     } else if (rainProbability >= 60) {
       cooling += 0.25;
-      reasons.push(
-        "High near-term rain probability slightly lowers expected remaining-day maximum."
-      );
+      reasons.push("High near-term rain probability slightly lowers expected remaining-day maximum.");
     } else if (rainProbability >= 40) {
       cooling += 0.1;
-      reasons.push(
-        "Moderate near-term rain probability adds mild cooling pressure."
-      );
+      reasons.push("Moderate near-term rain probability adds mild cooling pressure.");
+    }
+  }
+
+  if (rainProbability6h !== null) {
+    if (rainProbability6h >= 80) {
+      cooling += 0.12;
+      reasons.push("High next-6h rain risk adds cooling / convective uncertainty.");
+    } else if (rainProbability6h >= 60) {
+      cooling += 0.06;
+      reasons.push("Moderate next-6h rain risk modestly limits heat upside.");
     }
   }
 
@@ -1230,17 +1275,47 @@ function estimateCoolingAdjustment(params: {
   if (rainfall !== null) {
     if (rainfall >= 10) {
       cooling += 0.25;
-      reasons.push(
-        "Recent heavy observed rainfall supports a cooler near-term profile."
-      );
+      reasons.push("Recent heavy observed rainfall supports a cooler near-term profile.");
     } else if (rainfall >= 2) {
       cooling += 0.1;
       reasons.push("Recent observed rainfall adds minor cooling pressure.");
     }
   }
 
+  /**
+   * PR-5 Weather Evidence:
+   * Use the richer evidence engine as an upper-confidence cooling/warming adjustment.
+   * Negative means solar-heating bonus exceeds cooling penalty.
+   */
+  if (
+    typeof params.weatherEvidenceNetAdjustmentC === "number" &&
+    Number.isFinite(params.weatherEvidenceNetAdjustmentC)
+  ) {
+    const evidenceAdjustment = params.weatherEvidenceNetAdjustmentC;
+
+    if (evidenceAdjustment > cooling) {
+      cooling = evidenceAdjustment;
+      reasons.push("Structured weather evidence implies stronger cooling than simple rain/cloud rules.");
+    } else if (evidenceAdjustment < -0.05) {
+      cooling = Math.min(cooling, evidenceAdjustment);
+      reasons.push("Structured weather evidence shows strong solar heating offset.");
+    }
+  }
+
+  if ((params.rainCoolingScore ?? 0) >= 65) {
+    reasons.push("Rain cooling score is elevated.");
+  }
+
+  if ((params.cloudCoolingPenaltyC ?? 0) >= 0.2) {
+    reasons.push("Cloud cooling penalty is material.");
+  }
+
+  if ((params.solarHeatingBonusC ?? 0) >= 0.1) {
+    reasons.push("Solar heating bonus partially offsets cooling adjustment.");
+  }
+
   return {
-    coolingAdjustmentC: clamp(cooling, 0, 0.8),
+    coolingAdjustmentC: clamp(cooling, -0.25, 1.25),
     adjustmentReasons: reasons
   };
 }
@@ -1254,6 +1329,11 @@ function estimateStdDevC(params: {
   officialForecastMaxC: number | null;
   modelDisagreementC: number | null;
   rainProbabilityNext2hPct: number | null;
+
+  rainProbabilityNext6hPct?: number | null;
+  rainCoolingScore?: number;
+  sourceCount?: number;
+  uncertaintyAdjustmentC?: number | null;
 }) {
   let stdDev: number;
 
@@ -1288,7 +1368,28 @@ function estimateStdDevC(params: {
   if ((params.rainProbabilityNext2hPct ?? 0) >= 60) {
     stdDev += 0.08;
   }
+if ((params.rainProbabilityNext6hPct ?? 0) >= 70) {
+    stdDev += 0.06;
+  }
 
+  if ((params.rainCoolingScore ?? 0) >= 65) {
+    stdDev += 0.08;
+  } else if ((params.rainCoolingScore ?? 0) >= 40) {
+    stdDev += 0.04;
+  }
+
+  if ((params.sourceCount ?? 3) <= 1) {
+    stdDev += 0.12;
+  } else if ((params.sourceCount ?? 3) <= 2) {
+    stdDev += 0.05;
+  }
+
+  if (
+    typeof params.uncertaintyAdjustmentC === "number" &&
+    Number.isFinite(params.uncertaintyAdjustmentC)
+  ) {
+    stdDev += clamp(params.uncertaintyAdjustmentC * 0.35, 0, 0.18);
+  }
   return clamp(stdDev, 0.25, 1.35);
 }
 
@@ -1346,6 +1447,7 @@ function computeWeatherInputs(
 ): ForecastWeatherInputs {
   const bounds = getHongKongDayBounds(now);
   const hongKongHour = bounds.hour;
+  const weatherEvidence = buildWeatherEvidenceFromSnapshot(snapshot, now);
   const remainingSettlementHours = Math.max(
     0,
     (bounds.endMs - now.getTime()) / (60 * 60 * 1000)
@@ -1390,19 +1492,28 @@ function computeWeatherInputs(
     getAt(snapshot, ["derived", "windyFutureMaxC"])
   ]);
 
-  const rainProbabilityNext2hPct = firstNumber([
-    getAt(snapshot, ["derived", "rainProbabilityNext2hPct"])
-  ]);
+ const rainProbabilityNext2hPct = firstNumber([
+  getAt(snapshot, ["derived", "rainProbabilityNext2hPct"]),
+  weatherEvidence.cooling.rainProbabilityNext2hPct
+]);
 
-  const cloudCoverNowPct = firstNumber([
-    getAt(snapshot, ["derived", "cloudCoverNowPct"]),
-    snapshot.openMeteo?.current?.cloudCoverPct
-  ]);
+const rainProbabilityNext6hPct = firstNumber([
+  getAt(snapshot, ["derived", "rainProbabilityNext6hPct"]),
+  weatherEvidence.cooling.rainProbabilityNext6hPct
+]);
 
-  const modelDisagreementC =
-    openMeteoRemainingDayMaxC !== null && windyRemainingDayMaxC !== null
-      ? Math.abs(openMeteoRemainingDayMaxC - windyRemainingDayMaxC)
-      : null;
+const cloudCoverNowPct = firstNumber([
+  getAt(snapshot, ["derived", "cloudCoverNowPct"]),
+  snapshot.openMeteo?.current?.cloudCoverPct,
+  weatherEvidence.heating.cloudCoverNowPct
+]);
+
+const modelDisagreementC = firstNumber([
+  weatherEvidence.uncertainty.modelDisagreementC,
+  openMeteoRemainingDayMaxC !== null && windyRemainingDayMaxC !== null
+    ? Math.abs(openMeteoRemainingDayMaxC - windyRemainingDayMaxC)
+    : null
+]);
 
   /*
     HKO official forecast max is a useful forecast channel, but it is not an
@@ -1424,11 +1535,18 @@ function computeWeatherInputs(
     }
   ]);
 
-  const cooling = estimateCoolingAdjustment({
-    rainProbabilityNext2hPct,
-    cloudCoverNowPct,
-    observedHourlyRainfallMm: hourlyRainfallMm
-  });
+  const weatherEvidenceNetAdjustmentC = getWeatherEvidenceNetAdjustmentC(weatherEvidence);
+
+const cooling = estimateCoolingAdjustment({
+  rainProbabilityNext2hPct,
+  rainProbabilityNext6hPct,
+  cloudCoverNowPct,
+  observedHourlyRainfallMm: hourlyRainfallMm,
+  weatherEvidenceNetAdjustmentC,
+  rainCoolingScore: weatherEvidence.cooling.rainCoolingScore,
+  cloudCoolingPenaltyC: weatherEvidence.heating.cloudCoolingPenaltyC,
+  solarHeatingBonusC: weatherEvidence.heating.solarHeatingBonusC
+});
 
   let adjustedFutureMeanC =
     modelFutureMeanC ??
@@ -1501,15 +1619,19 @@ function computeWeatherInputs(
     (windyRemainingDayMaxC !== null ? 1 : 0);
 
   const forecastFinalMaxStdDevC = estimateStdDevC({
-    hour: hongKongHour,
-    remainingSettlementHours,
-    observedMaxC,
-    openMeteoRemainingDayMaxC,
-    windyRemainingDayMaxC,
-    officialForecastMaxC,
-    modelDisagreementC,
-    rainProbabilityNext2hPct
-  });
+  hour: hongKongHour,
+  remainingSettlementHours,
+  observedMaxC,
+  openMeteoRemainingDayMaxC,
+  windyRemainingDayMaxC,
+  officialForecastMaxC,
+  modelDisagreementC,
+  rainProbabilityNext2hPct,
+  rainProbabilityNext6hPct,
+  rainCoolingScore: weatherEvidence.cooling.rainCoolingScore,
+  sourceCount,
+  uncertaintyAdjustmentC: weatherEvidence.uncertainty.uncertaintyAdjustmentC
+});
 
   return {
     forecastTargetDate: bounds.ymd,
@@ -1561,11 +1683,47 @@ function computeWeatherInputs(
     forecastFinalMaxStdDevC: roundNumber(forecastFinalMaxStdDevC, 3) ?? 0.6,
 
     rainProbabilityNext2hPct: roundNumber(rainProbabilityNext2hPct, 1),
-    cloudCoverNowPct: roundNumber(cloudCoverNowPct, 1),
+rainProbabilityNext6hPct: roundNumber(rainProbabilityNext6hPct, 1),
 
-    modelDisagreementC: roundNumber(modelDisagreementC, 3),
-    sourceCount,
-    adjustmentReasons: cooling.adjustmentReasons
+precipitationNext2hMm: weatherEvidence.cooling.precipitationNext2hMm,
+precipitationNext6hMm: weatherEvidence.cooling.precipitationNext6hMm,
+precipitationRemainingDayMm: weatherEvidence.cooling.precipitationRemainingDayMm,
+
+rainNext2hMm: weatherEvidence.cooling.rainNext2hMm,
+rainNext6hMm: weatherEvidence.cooling.rainNext6hMm,
+rainRemainingDayMm: weatherEvidence.cooling.rainRemainingDayMm,
+
+cloudCoverNowPct: roundNumber(cloudCoverNowPct, 1),
+lowCloudNowPct: weatherEvidence.heating.lowCloudCoverNowPct,
+midCloudNowPct: weatherEvidence.heating.midCloudCoverNowPct,
+highCloudNowPct: weatherEvidence.heating.highCloudCoverNowPct,
+
+shortwaveNowWm2: weatherEvidence.heating.shortwaveNowWm2,
+shortwaveRemainingMeanWm2: weatherEvidence.heating.shortwaveRemainingMeanWm2,
+shortwaveRemainingMaxWm2: weatherEvidence.heating.shortwaveRemainingMaxWm2,
+shortwaveRemainingEnergyMjM2: weatherEvidence.heating.shortwaveRemainingEnergyMjM2,
+
+solarHeatingScore: weatherEvidence.heating.solarHeatingScore,
+solarHeatingBonusC: weatherEvidence.heating.solarHeatingBonusC,
+cloudCoolingPenaltyC: weatherEvidence.heating.cloudCoolingPenaltyC,
+
+rainCoolingScore: weatherEvidence.cooling.rainCoolingScore,
+rainCoolingAdjustmentC: weatherEvidence.cooling.rainCoolingAdjustmentC,
+
+dewPointNowC: weatherEvidence.airMass.dewPointNowC,
+apparentTemperatureNowC: weatherEvidence.airMass.apparentTemperatureNowC,
+relativeHumidityNowPct: weatherEvidence.airMass.relativeHumidityNowPct,
+windSpeedNowKmh: weatherEvidence.airMass.windSpeedNowKmh,
+windGustNowKmh: weatherEvidence.airMass.windGustNowKmh,
+windDirectionNowDeg: weatherEvidence.airMass.windDirectionNowDeg,
+
+modelDisagreementC: roundNumber(modelDisagreementC, 3),
+sourceCount,
+adjustmentReasons: [
+  ...cooling.adjustmentReasons,
+  ...weatherEvidence.cooling.reasons,
+  ...weatherEvidence.aiHints
+].filter((value, index, array) => array.indexOf(value) === index)
   };
 }
 
@@ -1945,7 +2103,29 @@ function buildExplanationFactors(params: {
       )}%, reducing solar heating potential.`
     );
   }
+  if ((params.weather.solarHeatingScore ?? 0) >= 70) {
+  factors.push(
+    `Solar heating score is ${params.weather.solarHeatingScore.toFixed(
+      0
+    )}/100, supporting daytime upside.`
+  );
+}
 
+if ((params.weather.rainCoolingScore ?? 0) >= 60) {
+  factors.push(
+    `Rain cooling score is ${params.weather.rainCoolingScore.toFixed(
+      0
+    )}/100, suppressing heat upside.`
+  );
+}
+
+if ((params.weather.cloudCoolingPenaltyC ?? 0) >= 0.15) {
+  factors.push(
+    `Cloud cooling penalty is approximately ${params.weather.cloudCoolingPenaltyC.toFixed(
+      2
+    )}°C.`
+  );
+}
   const clobMidpoint =   getClobMidpoint(params.clob) ?? getClobMidpoint(params.outcome);
 
   if (clobMidpoint !== null) {
@@ -2080,13 +2260,23 @@ function buildKeyDrivers(params: {
     );
   }
 
-  if (params.weather.modelDisagreementC !== null) {
-    drivers.push(
-      `Open-Meteo / Windy model disagreement is ${params.weather.modelDisagreementC.toFixed(
-        2
-      )}°C.`
-    );
-  }
+  drivers.push(
+  `Solar heating score ${params.weather.solarHeatingScore}/100; rain cooling score ${params.weather.rainCoolingScore}/100.`
+);
+
+if (params.weather.rainProbabilityNext6hPct !== null) {
+  drivers.push(
+    `Next-6h rain probability is ${params.weather.rainProbabilityNext6hPct.toFixed(0)}%.`
+  );
+}
+
+if (params.weather.shortwaveRemainingMeanWm2 !== null) {
+  drivers.push(
+    `Remaining-day mean shortwave radiation is ${params.weather.shortwaveRemainingMeanWm2.toFixed(
+      0
+    )} W/m².`
+  );
+}
 
   if (params.marketWeight > 0) {
     drivers.push(
@@ -2204,7 +2394,22 @@ function buildSummary(params: {
       "Market blend is disabled or insufficient market prices are available."
     );
   }
+  pieces.push(
+  `Weather evidence: solar heating score ${params.weather.solarHeatingScore}/100, rain cooling score ${params.weather.rainCoolingScore}/100.`
+);
 
+if (params.weather.shortwaveRemainingMeanWm2 !== null) {
+  pieces.push(
+    `Remaining shortwave mean is ${params.weather.shortwaveRemainingMeanWm2.toFixed(0)} W/m².`
+  );
+}
+
+if (params.weather.rainProbabilityNext6hPct !== null) {
+  pieces.push(
+    `Next-6h rain probability is ${params.weather.rainProbabilityNext6hPct.toFixed(0)}%.`
+  );
+}
+  
   pieces.push(`Confidence is ${params.confidenceLabel}.`);
 
   return pieces.join(" ");
@@ -2222,6 +2427,7 @@ export function buildForecastFromMultiChannelSnapshot(params: {
   const blendMarket = params.options?.blendMarket ?? true;
 
   const weather = computeWeatherInputs(params.snapshot, now);
+  const weatherEvidence = buildWeatherEvidenceFromSnapshot(params.snapshot, now);
 
   const confidence = estimateConfidence({
     observedMaxC: weather.observedMaxC,
@@ -2561,7 +2767,7 @@ const gammaProbability = roundNumber(
     rainfallMm: weather.rainfallMm,
 
     weather,
-
+    weatherEvidence,
     model: {
       method: "same-day-temperature-distribution-with-market-blend",
       rangeConvention: "lower-inclusive-upper-exclusive",
@@ -2618,7 +2824,9 @@ const gammaProbability = roundNumber(
         "The observed max lower bound is max(HKO max since midnight, HKO current temperature).",
         "Official HKO forecast max is used as a forecast prior, not as an observed lower bound.",
         "Weather fair probabilities come from a normal distribution around the same-day final maximum estimate.",
-        "When sufficient market prices are available, final probabilities blend weather fair probabilities with CLOB/Gamma-implied probabilities."
+        "When sufficient market prices are available, final probabilities blend weather fair probabilities with CLOB/Gamma-implied probabilities.",
+        "PR-5 weatherEvidence separates observed lower bound, temperature guidance, solar heating, rain cooling, air mass, and uncertainty signals.",
+        "AI commentary must explain structured weather evidence and must not invent weather inputs."
       ],
 
       hkoCurrentTempC: weather.hkoCurrentTempC,
@@ -2687,17 +2895,18 @@ export async function getForecast(
 
 export function summarizeForecastForPrompt(forecast: ForecastResult) {
   return {
-    version: forecast.version,
-    generatedAt: forecast.generatedAt,
-    hktDate: forecast.hktDate,
-    market: forecast.market,
-    weather: forecast.weather,
-    model: forecast.model,
-    confidence: forecast.confidence,
-    confidenceLabel: forecast.confidenceLabel,
-    keyDrivers: forecast.keyDrivers,
-    warnings: forecast.warnings,
-    topOutcome: forecast.topOutcome
+  version: forecast.version,
+  generatedAt: forecast.generatedAt,
+  hktDate: forecast.hktDate,
+  market: forecast.market,
+  weather: forecast.weather,
+  weatherEvidence: forecast.weatherEvidence,
+  model: forecast.model,
+  confidence: forecast.confidence,
+  confidenceLabel: forecast.confidenceLabel,
+  keyDrivers: forecast.keyDrivers,
+  warnings: forecast.warnings,
+  topOutcome: forecast.topOutcome
       ? {
           name: forecast.topOutcome.name,
           probabilityPct: forecast.topOutcome.probabilityPct,
