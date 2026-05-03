@@ -4447,6 +4447,194 @@ async function saveHistoryIfRequested(params: {
   }
 }
 
+function buildForecastPayload(params: {
+  forecast: Forecast;
+  aiCommentary: AiCommentary;
+  historySave: HistorySaveResult;
+  state: MarketState | null;
+  structuredAdjustment: PoeStructuredAdjustmentRun | null;
+}): Record<string, unknown> {
+  const normalized = normalizeForecastResultForPage(
+    params.forecast,
+    params.aiCommentary,
+    params.state,
+  );
+
+  const adjusted = applyPoeStructuredAdjustment(
+    normalized,
+    params.structuredAdjustment,
+  );
+
+  const enriched = enrichForecastWithTradeSignals(
+    adjusted,
+  ) as unknown as ForecastResult;
+
+  const enrichedRecord = recordOrEmpty(enriched);
+
+  const aiExplanation =
+    getAiExplanationText(params.aiCommentary) ??
+    asString(enrichedRecord.aiExplanation) ??
+    null;
+
+  return {
+    ...enrichedRecord,
+
+    /*
+      API status.
+    */
+    ok: true,
+
+    /*
+      Compatibility aliases.
+      Different frontend versions may read different keys.
+      Keeping all of these avoids breaking page.tsx.
+    */
+    forecast: enriched,
+    result: enriched,
+    data: enriched,
+
+    /*
+      AI commentary aliases.
+    */
+    aiCommentary: params.aiCommentary,
+    aiExplanation,
+
+    /*
+      Poe structured adjustment aliases.
+    */
+    structuredAdjustment: params.structuredAdjustment,
+    poeStructuredAdjustment: params.structuredAdjustment,
+
+    /*
+      History save aliases.
+    */
+    history: params.historySave,
+    historySave: params.historySave,
+  };
+}
+
+async function runForecast(options: RunForecastOptions) {
+  const forecast = await getForecast(options);
+
+  /*
+    IMPORTANT:
+    aiCommentary must be declared in the outer runForecast scope.
+
+    It is used later by:
+      - saveHistoryIfRequested(...)
+      - buildForecastPayload(...)
+
+    Do not declare it inside the try block.
+  */
+  let aiCommentary: AiCommentary = null;
+
+  let structuredAdjustment: PoeStructuredAdjustmentRun | null = null;
+
+  if (options.structuredAdjustment) {
+    try {
+      /**
+       * Phase 4 should read the same normalized / repaired data
+       * that the UI sees.
+       */
+      const normalizedForAdjustment = normalizeForecastResultForPage(
+        forecast,
+        null,
+        options.state ?? null,
+      );
+
+      structuredAdjustment = await getPoeStructuredAdjustment(
+        normalizedForAdjustment,
+      );
+    } catch (error) {
+      console.error("Poe structured adjustment error:", error);
+
+      structuredAdjustment = {
+        enabled: true,
+        applied: false,
+        model:
+          process.env.POE_STRUCTURED_ADJUSTMENT_MODEL ??
+          process.env.POE_MODEL ??
+          null,
+        adjustment: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Poe structured adjustment failed.",
+        rawText: null,
+      };
+    }
+  }
+
+  if (options.ai) {
+    try {
+      /**
+       * Give Poe commentary the same normalized / repaired / Phase-4-adjusted data
+       * that the UI sees. Otherwise commentary may explain pre-adjusted probabilities.
+       */
+      const normalizedForAiBase = normalizeForecastResultForPage(
+        forecast,
+        null,
+        options.state ?? null,
+      );
+
+      const normalizedForAi = applyPoeStructuredAdjustment(
+        normalizedForAiBase,
+        structuredAdjustment,
+      );
+
+      const forecastForAi = {
+        ...(normalizedForAi as unknown as Record<string, unknown>),
+        aiInputMode: "multi_channel_forecast_json",
+        multiChannelForecastJson: buildMultiChannelForecastJson(
+          normalizedForAi,
+        ),
+        diagnostics: {
+          ...recordOrEmpty(
+            (normalizedForAi as unknown as Record<string, unknown>).diagnostics,
+          ),
+          aiInputMode: "multi_channel_forecast_json",
+          poeInstruction:
+            "Use only the supplied outcomeUniverse and outcomeProbabilities. Do not invent buckets such as '22°C or higher' unless it appears in outcomeUniverse.",
+        },
+      } as unknown as Forecast;
+
+      aiCommentary = await getPoeForecastCommentary(forecastForAi);
+
+      if (!getAiExplanationText(aiCommentary)) {
+        aiCommentary = {
+          explanation:
+            "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape.",
+        };
+      }
+    } catch (error) {
+      console.error("Poe AI commentary error:", error);
+
+      aiCommentary = {
+        explanation:
+          error instanceof Error
+            ? `Poe AI explanation failed: ${error.message}`
+            : "Poe AI explanation failed.",
+      };
+    }
+  }
+
+  const historySave = await saveHistoryIfRequested({
+    saveHistory: Boolean(options.saveHistory),
+    state: options.state ?? null,
+    forecast,
+    aiCommentary,
+    structuredAdjustment,
+  });
+
+  return buildForecastPayload({
+    forecast,
+    aiCommentary,
+    historySave,
+    state: options.state ?? null,
+    structuredAdjustment,
+  });
+}
+
 async function runForecast(options: RunForecastOptions) {
   const forecast = await getForecast(options);
 
