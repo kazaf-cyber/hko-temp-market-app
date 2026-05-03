@@ -4726,7 +4726,7 @@ export async function GET(request: Request) {
       If you later want the checkbox to fully control Poe usage, change this
       to parseBoolean(url.searchParams.get("ai"), false).
     */
-    const ai = true;
+    const ai = parseBoolean(body.ai ?? body.forceAI, true);
 
     const marketWeightOverride =
       parseNumber(url.searchParams.get("marketWeight")) ??
@@ -4796,7 +4796,7 @@ export async function POST(request: Request) {
       to true. This keeps behaviour consistent and avoids the UI silently saying
       "AI explanation disabled or not available."
     */
-    const ai = true;
+    const ai = parseBoolean(body.ai ?? body.forceAI, true);
 
     const state = parseMarketState(body.state);
     const saveHistory = parseBoolean(body.saveHistory, false);
