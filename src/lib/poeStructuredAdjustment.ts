@@ -31,47 +31,19 @@ const OutcomeAdjustmentSchema = z.object({
   index: z.number().int().min(0),
   lower: z.number().nullable(),
   upper: z.number().nullable(),
-
-  /**
-   * Percentage points, not probability units.
-   *
-   * Example:
-   * +3.5 means +3.5 percentage points.
-   * -2 means -2 percentage points.
-   */
   adjustmentPct: z.number().min(-8).max(8),
-
-  /**
-   * Advisory only.
-   * The application will recompute normalized probabilities itself.
-   */
   suggestedAdjustedProbabilityPct: z.number().min(0).max(100),
-
   reason: z.string(),
   evidenceTags: z.array(EvidenceTagSchema),
 });
 
 export const PoeStructuredAdjustmentSchema = z.object({
   shouldApply: z.boolean(),
-
   confidence: z.enum(["low", "medium", "high"]),
-
-  /**
-   * Qualitative directional bias only.
-   * This is not used as a direct temperature forecast.
-   */
   globalTemperatureBiasC: z.number().min(-1.5).max(1.5),
-
-  /**
-   * Model-requested cap.
-   * Application still applies its own hard confidence cap.
-   */
   maxAbsoluteAdjustmentPct: z.number().min(0).max(8),
-
   rationale: z.string(),
-
   outcomeAdjustments: z.array(OutcomeAdjustmentSchema),
-
   warnings: z.array(z.string()),
   watchPoints: z.array(z.string()),
 });
@@ -93,14 +65,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-type ForecastAdjustmentRecord = {
-  outcomeProbabilities?: unknown;
-  outcomes?: unknown;
-  probabilities?: unknown;
-  diagnostics?: unknown;
-  warnings?: unknown;
-  keyDrivers?: unknown;
-};
+/**
+ * Safe spread helper.
+ * Returns the value if it is a plain object, otherwise an empty object.
+ * Use this to avoid TypeScript "Spread types may only be created from object types" errors
+ * when a field is typed loosely (e.g. unknown / optional / union).
+ */
+function recordOrEmpty(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -186,25 +159,13 @@ function writeOutcomeProbability<T extends Record<string, unknown>>(
 
   return {
     ...outcome,
-
-    /**
-     * Phase 4 audit fields.
-     */
     phase4Adjusted,
     poeAdjustedProbability: nextProbability,
     poeAdjustedProbabilityPct: nextPct,
     poeAdjustmentPct: adjustmentPct,
-
-    /**
-     * Keep LLM aliases too, in case your UI later expects generic LLM names.
-     */
     llmAdjustedProbability: nextProbability,
     llmAdjustedProbabilityPct: nextPct,
     llmAdjustmentPct: adjustmentPct,
-
-    /**
-     * Main probability fields used by UI / trade-signal layer.
-     */
     probability: nextProbability,
     probabilityPct: nextPct,
     finalProbability: nextProbability,
@@ -246,17 +207,11 @@ function normalizeOutcomes<T extends Record<string, unknown>>(
 }
 
 function buildPoeJsonSchema() {
-  /**
-   * Keep this schema simple and explicit.
-   * Poe Responses API accepts JSON schema through text.format.
-   */
   return {
     type: "object",
     additionalProperties: false,
     properties: {
-      shouldApply: {
-        type: "boolean",
-      },
+      shouldApply: { type: "boolean" },
       confidence: {
         type: "string",
         enum: ["low", "medium", "high"],
@@ -271,38 +226,23 @@ function buildPoeJsonSchema() {
         minimum: 0,
         maximum: 8,
       },
-      rationale: {
-        type: "string",
-      },
+      rationale: { type: "string" },
       outcomeAdjustments: {
         type: "array",
         items: {
           type: "object",
           additionalProperties: false,
           properties: {
-            index: {
-              type: "integer",
-              minimum: 0,
-            },
-            lower: {
-              anyOf: [{ type: "number" }, { type: "null" }],
-            },
-            upper: {
-              anyOf: [{ type: "number" }, { type: "null" }],
-            },
-            adjustmentPct: {
-              type: "number",
-              minimum: -8,
-              maximum: 8,
-            },
+            index: { type: "integer", minimum: 0 },
+            lower: { anyOf: [{ type: "number" }, { type: "null" }] },
+            upper: { anyOf: [{ type: "number" }, { type: "null" }] },
+            adjustmentPct: { type: "number", minimum: -8, maximum: 8 },
             suggestedAdjustedProbabilityPct: {
               type: "number",
               minimum: 0,
               maximum: 100,
             },
-            reason: {
-              type: "string",
-            },
+            reason: { type: "string" },
             evidenceTags: {
               type: "array",
               items: {
@@ -338,18 +278,8 @@ function buildPoeJsonSchema() {
           ],
         },
       },
-      warnings: {
-        type: "array",
-        items: {
-          type: "string",
-        },
-      },
-      watchPoints: {
-        type: "array",
-        items: {
-          type: "string",
-        },
-      },
+      warnings: { type: "array", items: { type: "string" } },
+      watchPoints: { type: "array", items: { type: "string" } },
     },
     required: [
       "shouldApply",
@@ -407,28 +337,18 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
 function extractJsonFromText(text: string): unknown {
   const trimmed = text.trim();
 
-  /**
-   * Best case: Poe model obeys text.format and output_text is plain JSON.
-   */
   try {
     return JSON.parse(trimmed);
   } catch {
     // Continue to fallback extraction.
   }
 
-  /**
-   * Fallback: handle accidental ```json fenced block.
-   */
   const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
 
   if (fencedMatch?.[1]) {
     return JSON.parse(fencedMatch[1].trim());
   }
 
-  /**
-   * Fallback: extract first JSON object-looking span.
-   * This is intentionally conservative.
-   */
   const firstBrace = trimmed.indexOf("{");
   const lastBrace = trimmed.lastIndexOf("}");
 
@@ -480,11 +400,6 @@ export async function getPoeStructuredAdjustment(
           content: buildAdjustmentPrompt(forecast),
         },
       ],
-
-      /**
-       * Important:
-       * This is Poe Responses API text.format, not Chat Completions response_format.
-       */
       text: {
         format: {
           type: "json_schema",
@@ -537,11 +452,14 @@ export function applyPoeStructuredAdjustment(
   forecast: ForecastResult,
   run: PoeStructuredAdjustmentRun | null | undefined,
 ): ForecastResult {
+  // ----- Case 1: nothing to apply -----
   if (!run?.adjustment || !run.adjustment.shouldApply) {
+    const forecastRecord = forecast as unknown as Record<string, unknown>;
+
     return {
       ...forecast,
       diagnostics: {
-        ...forecast.diagnostics,
+        ...recordOrEmpty(forecastRecord.diagnostics),
         phase4PoeAdjustment: {
           enabled: Boolean(run?.enabled),
           applied: false,
@@ -551,10 +469,6 @@ export function applyPoeStructuredAdjustment(
             ? "Poe returned shouldApply=false."
             : "No Poe structured adjustment was available.",
         },
-
-        /**
-         * Optional generic alias for UI.
-         */
         phase4LlmAdjustment: {
           enabled: Boolean(run?.enabled),
           applied: false,
@@ -569,21 +483,24 @@ export function applyPoeStructuredAdjustment(
     } as ForecastResult;
   }
 
-  const rawOutcomes = Array.isArray(forecast.outcomeProbabilities)
-    ? forecast.outcomeProbabilities
-    : Array.isArray(forecast.outcomes)
-      ? forecast.outcomes
-      : Array.isArray(forecast.probabilities)
-        ? forecast.probabilities
+  const forecastRecord = forecast as unknown as Record<string, unknown>;
+
+  const rawOutcomes = Array.isArray(forecastRecord.outcomeProbabilities)
+    ? (forecastRecord.outcomeProbabilities as unknown[])
+    : Array.isArray(forecastRecord.outcomes)
+      ? (forecastRecord.outcomes as unknown[])
+      : Array.isArray(forecastRecord.probabilities)
+        ? (forecastRecord.probabilities as unknown[])
         : [];
 
   const outcomeRecords = rawOutcomes.filter(isRecord);
 
+  // ----- Case 2: no outcome rows to adjust -----
   if (!outcomeRecords.length) {
     return {
       ...forecast,
       diagnostics: {
-        ...forecast.diagnostics,
+        ...recordOrEmpty(forecastRecord.diagnostics),
         phase4PoeAdjustment: {
           enabled: run.enabled,
           applied: false,
@@ -656,10 +573,6 @@ export function applyPoeStructuredAdjustment(
       ),
       poeAdjustmentReason: requested?.reason ?? null,
       poeAdjustmentEvidenceTags: requested?.evidenceTags ?? [],
-
-      /**
-       * Generic aliases.
-       */
       llmAdjustmentReason: requested?.reason ?? null,
       llmAdjustmentEvidenceTags: requested?.evidenceTags ?? [],
     };
@@ -687,26 +600,33 @@ export function applyPoeStructuredAdjustment(
     adjustment: run.adjustment,
   };
 
+  const existingWarnings = Array.isArray(forecastRecord.warnings)
+    ? (forecastRecord.warnings as unknown[])
+    : [];
+  const existingKeyDrivers = Array.isArray(forecastRecord.keyDrivers)
+    ? (forecastRecord.keyDrivers as unknown[])
+    : [];
+
   const nextForecast = {
     ...forecast,
-    outcomeProbabilities: normalized as unknown as ForecastOutcome[],
-    outcomes: normalized as unknown as ForecastOutcome[],
-    probabilities: normalized as unknown as ForecastOutcome[],
-    topOutcome: topOutcome as unknown as ForecastOutcome | null,
+    outcomeProbabilities: normalized,
+    outcomes: normalized,
+    probabilities: normalized,
+    topOutcome,
     diagnostics: {
-      ...forecast.diagnostics,
+      ...recordOrEmpty(forecastRecord.diagnostics),
       phase4PoeAdjustment: phase4Diagnostics,
       phase4LlmAdjustment: phase4Diagnostics,
     },
     warnings: [
-      ...(Array.isArray(forecast.warnings) ? forecast.warnings : []),
+      ...existingWarnings,
       ...run.adjustment.warnings.map((item) => `Phase 4 Poe: ${item}`),
     ],
     keyDrivers: [
-      ...(Array.isArray(forecast.keyDrivers) ? forecast.keyDrivers : []),
+      ...existingKeyDrivers,
       `Phase 4 Poe structured adjustment applied: ${run.adjustment.rationale}`,
     ],
   };
 
-  return nextForecast as ForecastResult;
+  return nextForecast as unknown as ForecastResult;
 }
