@@ -153,17 +153,29 @@ export function buildMultiChannelForecastPrompt(forecast: ForecastResult) {
   const compactForecast = summarizeForecastForPrompt(forecast);
 
   return [
-    "你是一名嚴謹的香港天氣與 prediction market 分析員。",
+    "你是一名嚴謹的香港天文台最高氣溫預測分析員。",
     "",
-    "請根據以下 multi-channel forecast JSON，用繁體中文寫一段可直接放在 dashboard 上的分析。",
+    "請根據以下 Forecast JSON，用繁體中文 / 香港粵語書面風格，寫一段可直接放在 dashboard 上的天氣概率分析。",
     "",
-    "要求：",
-    "1. 先用 1 句說明目前最高機率 outcome。",
-    "2. 解釋 HKO observed max、Open-Meteo、Windy、rain/cloud、CLOB/Gamma price 如何影響機率。",
-    "3. 如果某些 outcome 已因 observed max 達到 upper bound 而不可能，請明確指出。",
-    "4. 不要捏造 JSON 沒有提供的數據。",
-    "5. 不要給投資建議；只說明概率、風險與不確定性。",
-    "6. 最後用 2-4 個 bullet points 列出 watch points。",
+    "核心規則：",
+    "1. 你必須主要根據 weatherEvidence、weatherProbability、observed lower bound、model uncertainty 解釋。",
+    "2. 不可以自行預測新的溫度數值；只能解釋 JSON 內已提供的數值。",
+    "3. 不可以捏造 JSON 沒有提供的天氣數據、雷達、衛星、雨區、風向或 HKO 公告。",
+    "4. HKO observed max lower bound 是 hard floor；如果 outcome upper bound 已被 observed max 達到或超過，必須指出該 outcome 已不可能。",
+    "5. Official HKO forecast max 是 forecast prior，不是 observed lower bound。",
+    "6. Market / CLOB / Gamma price 只可以作『市場價格與天氣模型概率差異』比較，不可以用來改寫天氣預測。",
+    "7. 不要給投資建議；不要叫人買入、賣出、下注、加倉或止蝕。",
+    "",
+    "輸出格式：",
+    "A. 先用 1 句說明目前最高機率 outcome，以及 final probability / weather probability。",
+    "B. 用 2-4 段解釋：",
+    "   - HKO observed lower bound / current temperature",
+    "   - Open-Meteo / Windy / HKO official guidance",
+    "   - solar heating score / cloud penalty",
+    "   - rain cooling score / precipitation risk",
+    "   - model disagreement / confidence",
+    "C. 如果 market price 有提供，只用 1 段講 weather probability vs market probability 差異。",
+    "D. 最後用 2-4 個 bullet points 列出 watch points。",
     "",
     "Forecast JSON:",
     "```json",
@@ -183,7 +195,7 @@ export async function getPoeForecastCommentary(
       {
         role: "system",
         content:
-          "You are a careful weather-market analyst. Write in Traditional Chinese. Be concise, numerical, and do not invent facts."
+          "You are a careful Hong Kong maximum-temperature forecast analyst. Write in Traditional Chinese / Hong Kong Cantonese style. Be concise, numerical, and do not invent facts. Do not provide investment advice."
       },
       {
         role: "user",
@@ -191,7 +203,7 @@ export async function getPoeForecastCommentary(
       }
     ],
     {
-      temperature: options.temperature ?? 0.2,
+      temperature: options.temperature ?? 0.15,
       maxTokens: options.maxTokens ?? 8000,
       model: options.model
     }
@@ -203,16 +215,18 @@ export async function getPoeForecastCommentary(
   };
 }
 
-/*
-  Backward-compatible simple helpers.
-  These are intentionally generic so older routes/components can still call a plain Poe prompt.
-*/
+/**
+ * Backward-compatible simple helpers.
+ * These are intentionally generic so older routes/components can still call a plain Poe prompt.
+ */
 export async function askPoe(prompt: string, system?: string): Promise<string | null> {
   const result = await callPoe(
     [
       {
         role: "system",
-        content: system ?? "You are a helpful assistant. Reply in Traditional Chinese when appropriate."
+        content:
+          system ??
+          "You are a helpful assistant. Reply in Traditional Chinese when appropriate. Do not invent facts."
       },
       {
         role: "user",
