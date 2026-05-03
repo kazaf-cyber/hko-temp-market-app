@@ -4,6 +4,7 @@ import { getPoeForecastCommentary } from "@/lib/poe";
 import { initDatabase, saveForecastRun } from "@/lib/db";
 import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 import { enrichForecastWithTradeSignals } from "@/lib/trading/enrichForecast";
+import { applyLlmStructuredAdjustment, getLlmStructuredAdjustment, type LlmStructuredAdjustmentRun } from "@/lib/llmStructuredAdjustment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,13 @@ type RunForecastOptions = GetForecastOptions & {
   ai?: boolean;
   saveHistory?: boolean;
   state?: MarketState | null;
+
+  /**
+   * Phase 4:
+   * Let an LLM produce a strict structured probability adjustment.
+   * Default false to avoid unexpected quota usage.
+   */
+  structuredAdjustment?: boolean;
 };
 
 type NumericCandidate = {
@@ -4348,20 +4356,21 @@ function normalizeForecastResultForPage(
 function buildResultForHistory(
   forecast: Forecast,
   aiCommentary: AiCommentary,
-  state: MarketState | null = null
+  state: MarketState | null = null,
+  structuredAdjustment: LlmStructuredAdjustmentRun | null = null,
 ): ForecastResult {
-  /* Save the normalized result shape too, so history display can use:
-     row.result.outcomeProbabilities
-     row.result.estimatedFinalMaxC
-     row.result.maxSoFarC
+  const normalized = normalizeForecastResultForPage(
+    forecast,
+    aiCommentary,
+    state,
+  );
 
-     v3 edge engine:
-     Also save executable tradeSignals so later backtest / calibration can use
-     the same signal snapshot that the UI saw.
-  */
-  return enrichForecastWithTradeSignals(
-    normalizeForecastResultForPage(forecast, aiCommentary, state)
-  ) as unknown as ForecastResult;
+  const adjusted = applyLlmStructuredAdjustment(
+    normalized,
+    structuredAdjustment,
+  );
+
+  return enrichForecastWithTradeSignals(adjusted) as unknown as ForecastResult;
 }
 
 async function ensureDatabaseInitialized() {
@@ -4380,8 +4389,8 @@ async function saveHistoryIfRequested(params: {
   state: MarketState | null;
   forecast: Forecast;
   aiCommentary: AiCommentary;
+  structuredAdjustment: LlmStructuredAdjustmentRun | null;
 }): Promise<HistorySaveResult> {
-  if (!params.saveHistory) {
     return {
       saved: false,
       reason: "History save was not requested."
@@ -4405,10 +4414,11 @@ async function saveHistoryIfRequested(params: {
     await ensureDatabaseInitialized();
 
     const resultForHistory = buildResultForHistory(
-      params.forecast,
-      params.aiCommentary,
-      params.state
-    );
+  params.forecast,
+  params.aiCommentary,
+  params.state,
+  params.structuredAdjustment,
+);
 
     return await saveForecastRun({
       hktDate: getForecastHktDate(params.forecast),
@@ -4434,17 +4444,23 @@ function buildForecastPayload(params: {
   aiCommentary: AiCommentary;
   historySave: HistorySaveResult;
   state?: MarketState | null;
+  structuredAdjustment: LlmStructuredAdjustmentRun | null;
 }) {
   /*
     Normalize into the exact shape page.tsx expects.
   */
-  const resultForDisplay = enrichForecastWithTradeSignals(
-  normalizeForecastResultForPage(
-    params.forecast,
-    params.aiCommentary,
-    params.state ?? null
-  )
+  const normalizedForDisplay = normalizeForecastResultForPage(
+  params.forecast,
+  params.aiCommentary,
+  params.state ?? null,
 );
+
+const adjustedForDisplay = applyLlmStructuredAdjustment(
+  normalizedForDisplay,
+  params.structuredAdjustment,
+);
+
+const resultForDisplay = enrichForecastWithTradeSignals(adjustedForDisplay);
 
   const resultRecord = resultForDisplay as unknown as Record<string, unknown>;
 
@@ -4479,6 +4495,10 @@ function buildForecastPayload(params: {
     ai: params.aiCommentary,
     aiCommentary: params.aiCommentary,
     aiExplanation,
+    structuredAdjustment: params.structuredAdjustment,
+    phase4LlmAdjustment:
+   (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
+    ?.phase4LlmAdjustment ?? null,
 
     /*
       History save status.
@@ -4500,13 +4520,16 @@ function buildForecastPayload(params: {
     */
     forecast: resultForDisplay,
     result: resultForDisplay,
-
+    structuredAdjustment: params.structuredAdjustment,
+    phase4LlmAdjustment:
+    (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
+    ?.phase4LlmAdjustment ?? null,
     /*
       Forecast top-level fields for debugging / older clients.
     */
    outcomes: resultRecord.outcomes ?? [],
-probabilities: resultRecord.outcomeProbabilities ?? resultRecord.probabilities ?? [],
-outcomeProbabilities: resultRecord.outcomeProbabilities ?? [],
+   probabilities: resultRecord.outcomeProbabilities ?? resultRecord.probabilities ?? [],
+   outcomeProbabilities: resultRecord.outcomeProbabilities ?? [],
 
 /* v3 edge-engine top-level aliases. */
 tradeSignals: resultRecord.tradeSignals ?? [],
@@ -4647,43 +4670,83 @@ summary: resultRecord.summary ?? null,
 async function runForecast(options: RunForecastOptions) {
   const forecast = await getForecast(options);
 
+  let structuredAdjustment: LlmStructuredAdjustmentRun | null = null;
+
+  if (options.structuredAdjustment) {
+    try {
+      /**
+       * Phase 4 adjustment should read the same normalized / repaired data
+       * that the UI sees.
+       */
+      const normalizedForAdjustment = normalizeForecastResultForPage(
+        forecast,
+        null,
+        options.state ?? null,
+      );
+
+      structuredAdjustment = await getLlmStructuredAdjustment(
+        normalizedForAdjustment,
+      );
+    } catch (error) {
+      console.error("LLM structured adjustment error:", error);
+
+      structuredAdjustment = {
+        enabled: true,
+        applied: false,
+        model:
+          process.env.OPENAI_STRUCTURED_ADJUSTMENT_MODEL ??
+          process.env.OPENAI_MODEL ??
+          null,
+        adjustment: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : "LLM structured adjustment failed.",
+      };
+    }
+  }
+
   let aiCommentary: AiCommentary = null;
 
   if (options.ai) {
     try {
-      /*
-        Give Poe the same normalized / repaired data that the UI sees.
-        Otherwise Poe may analyse raw missing / impossible probabilities.
-      */
-      const normalizedForAi = enrichForecastWithTradeSignals(
-      normalizeForecastResultForPage(forecast, null, options.state ?? null)
-       );
+      /**
+       * Give Poe the same normalized / repaired / Phase-4-adjusted data
+       * that the UI sees. Otherwise Poe may explain pre-adjusted probabilities.
+       */
+      const normalizedForAiBase = normalizeForecastResultForPage(
+        forecast,
+        null,
+        options.state ?? null,
+      );
+
+      const normalizedForAi = applyLlmStructuredAdjustment(
+        normalizedForAiBase,
+        structuredAdjustment,
+      );
 
       const forecastForAi = {
         ...(normalizedForAi as unknown as Record<string, unknown>),
         aiInputMode: "multi_channel_forecast_json",
-        multiChannelForecastJson: buildMultiChannelForecastJson(normalizedForAi),
+        multiChannelForecastJson: buildMultiChannelForecastJson(
+          normalizedForAi,
+        ),
         diagnostics: {
           ...recordOrEmpty(
-            (normalizedForAi as unknown as Record<string, unknown>).diagnostics
+            (normalizedForAi as unknown as Record<string, unknown>).diagnostics,
           ),
           aiInputMode: "multi_channel_forecast_json",
           poeInstruction:
-            "Use only the supplied outcomeUniverse and outcomeProbabilities. Do not invent buckets such as '22°C or higher' unless it appears in outcomeUniverse."
-        }
+            "Use only the supplied outcomeUniverse and outcomeProbabilities. Do not invent buckets such as '22°C or higher' unless it appears in outcomeUniverse.",
+        },
       } as unknown as Forecast;
 
       aiCommentary = await getPoeForecastCommentary(forecastForAi);
 
-      /*
-        If poe.ts returns null / empty instead of throwing,
-        show a useful diagnostic rather than silently showing:
-        "AI explanation disabled or not available."
-      */
       if (!getAiExplanationText(aiCommentary)) {
         aiCommentary = {
           explanation:
-            "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape."
+            "Poe AI explanation returned no content. Check your Poe environment variable and src/lib/poe.ts return shape.",
         };
       }
     } catch (error) {
@@ -4693,7 +4756,7 @@ async function runForecast(options: RunForecastOptions) {
         explanation:
           error instanceof Error
             ? `Poe AI explanation failed: ${error.message}`
-            : "Poe AI explanation failed."
+            : "Poe AI explanation failed.",
       };
     }
   }
@@ -4702,14 +4765,16 @@ async function runForecast(options: RunForecastOptions) {
     saveHistory: Boolean(options.saveHistory),
     state: options.state ?? null,
     forecast,
-    aiCommentary
+    aiCommentary,
+    structuredAdjustment,
   });
 
   return buildForecastPayload({
     forecast,
     aiCommentary,
     historySave,
-    state: options.state ?? null
+    state: options.state ?? null,
+    structuredAdjustment,
   });
 }
 
@@ -4736,14 +4801,15 @@ export async function GET(request: Request) {
       parseNumber(url.searchParams.get("marketWeightOverride"));
 
     const payload = await runForecast({
-      includeClob,
-      blendMarket,
-      includeRawSnapshot: debug,
-      marketWeightOverride,
-      ai,
-      saveHistory: false,
-      state: null
-    });
+  includeClob,
+  blendMarket,
+  includeRawSnapshot: debug,
+  marketWeightOverride,
+  ai,
+  structuredAdjustment,
+  saveHistory: false,
+  state: null,
+  });
 
     return NextResponse.json(payload, {
       headers: {
@@ -4799,7 +4865,15 @@ export async function POST(request: Request) {
       to true. This keeps behaviour consistent and avoids the UI silently saying
       "AI explanation disabled or not available."
     */
-    const ai = parseBoolean(body.ai ?? body.forceAI, true);
+    const ai = parseBoolean(
+  url.searchParams.get("ai") ?? url.searchParams.get("forceAI"),
+  true,
+);
+
+const structuredAdjustment = parseBoolean(
+  body.structuredAdjustment ?? body.llmAdjustment ?? body.phase4,
+  false,
+);
 
     const state = parseMarketState(body.state);
     const saveHistory = parseBoolean(body.saveHistory, false);
@@ -4811,14 +4885,16 @@ export async function POST(request: Request) {
       parseNumber(url.searchParams.get("marketWeightOverride"));
 
     const payload = await runForecast({
-      includeClob,
-      blendMarket,
-      includeRawSnapshot: debug,
-      marketWeightOverride,
-      ai,
-      saveHistory,
-      state
-    });
+  includeClob,
+  blendMarket,
+  includeRawSnapshot: debug,
+  marketWeightOverride,
+  ai,
+  structuredAdjustment,
+  saveHistory,
+  state,
+  });
+
 
     return NextResponse.json(payload, {
       headers: {
