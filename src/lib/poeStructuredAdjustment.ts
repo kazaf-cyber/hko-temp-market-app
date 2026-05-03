@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 
 import {
@@ -8,7 +7,7 @@ import {
   type ForecastResult,
 } from "@/lib/forecast";
 
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_POE_MODEL = "Claude-Opus-4.7";
 
 const EvidenceTagSchema = z.enum([
   "observed_floor",
@@ -35,15 +34,16 @@ const OutcomeAdjustmentSchema = z.object({
 
   /**
    * Percentage points, not probability units.
+   *
    * Example:
-   *   +3.5 means +3.5 percentage points.
-   *   -2 means -2 percentage points.
+   * +3.5 means +3.5 percentage points.
+   * -2 means -2 percentage points.
    */
   adjustmentPct: z.number().min(-8).max(8),
 
   /**
-   * This is advisory only.
-   * The application will recompute final normalized probabilities itself.
+   * Advisory only.
+   * The application will recompute normalized probabilities itself.
    */
   suggestedAdjustedProbabilityPct: z.number().min(0).max(100),
 
@@ -51,20 +51,20 @@ const OutcomeAdjustmentSchema = z.object({
   evidenceTags: z.array(EvidenceTagSchema),
 });
 
-export const ForecastStructuredAdjustmentSchema = z.object({
+export const PoeStructuredAdjustmentSchema = z.object({
   shouldApply: z.boolean(),
 
   confidence: z.enum(["low", "medium", "high"]),
 
   /**
-   * Global qualitative bias only.
-   * This must not be treated as a direct temperature forecast.
+   * Qualitative directional bias only.
+   * This is not used as a direct temperature forecast.
    */
   globalTemperatureBiasC: z.number().min(-1.5).max(1.5),
 
   /**
-   * Max absolute per-outcome adjustment requested by the model.
-   * Application code still applies its own hard cap.
+   * Model-requested cap.
+   * Application still applies its own hard confidence cap.
    */
   maxAbsoluteAdjustmentPct: z.number().min(0).max(8),
 
@@ -76,16 +76,17 @@ export const ForecastStructuredAdjustmentSchema = z.object({
   watchPoints: z.array(z.string()),
 });
 
-export type ForecastStructuredAdjustment = z.infer<
-  typeof ForecastStructuredAdjustmentSchema
+export type PoeStructuredAdjustment = z.infer<
+  typeof PoeStructuredAdjustmentSchema
 >;
 
-export type LlmStructuredAdjustmentRun = {
+export type PoeStructuredAdjustmentRun = {
   enabled: boolean;
   applied: boolean;
   model: string | null;
-  adjustment: ForecastStructuredAdjustment | null;
+  adjustment: PoeStructuredAdjustment | null;
   error: string | null;
+  rawText?: string | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,11 +106,15 @@ function roundPct(value: number) {
 }
 
 function numberOrNull(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
   if (typeof value === "string") {
     const parsed = Number(value.trim().replace(/%$/g, ""));
     return Number.isFinite(parsed) ? parsed : null;
   }
+
   return null;
 }
 
@@ -126,6 +131,7 @@ function getOutcomeProbability(outcome: unknown): number {
 
   for (const candidate of candidates) {
     const parsed = numberOrNull(candidate);
+
     if (parsed === null) continue;
 
     if (parsed >= 0 && parsed <= 1) {
@@ -142,8 +148,11 @@ function getOutcomeProbability(outcome: unknown): number {
 
 function getOutcomeIndex(outcome: unknown, fallbackIndex: number): number {
   if (!isRecord(outcome)) return fallbackIndex;
+
   const parsed = numberOrNull(outcome.index);
+
   if (parsed === null) return fallbackIndex;
+
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallbackIndex;
 }
 
@@ -156,17 +165,43 @@ function isImpossibleOutcome(outcome: unknown): boolean {
   );
 }
 
-function getOutcomeRange(outcome: unknown): {
-  lower: number | null;
-  upper: number | null;
-} {
-  if (!isRecord(outcome)) {
-    return { lower: null, upper: null };
-  }
+function writeOutcomeProbability<T extends Record<string, unknown>>(
+  outcome: T,
+  probability: number,
+  adjustment: number,
+  phase4Adjusted: boolean,
+): T {
+  const nextProbability = roundProbability(probability);
+  const nextPct = roundPct(nextProbability * 100);
+  const adjustmentPct = roundPct(adjustment * 100);
 
   return {
-    lower: numberOrNull(outcome.lower),
-    upper: numberOrNull(outcome.upper),
+    ...outcome,
+
+    /**
+     * Phase 4 audit fields.
+     */
+    phase4Adjusted,
+    poeAdjustedProbability: nextProbability,
+    poeAdjustedProbabilityPct: nextPct,
+    poeAdjustmentPct: adjustmentPct,
+
+    /**
+     * Keep LLM aliases too, in case your UI later expects generic LLM names.
+     */
+    llmAdjustedProbability: nextProbability,
+    llmAdjustedProbabilityPct: nextPct,
+    llmAdjustmentPct: adjustmentPct,
+
+    /**
+     * Main probability fields used by UI / trade-signal layer.
+     */
+    probability: nextProbability,
+    probabilityPct: nextPct,
+    finalProbability: nextProbability,
+    finalProbabilityPct: nextPct,
+    blendedProbability: nextProbability,
+    blendedProbabilityPct: nextPct,
   };
 }
 
@@ -192,40 +227,131 @@ function normalizeOutcomes<T extends Record<string, unknown>>(
     const current = getOutcomeProbability(outcome);
     const normalized = roundProbability(current / eligibleSum);
 
-    return writeOutcomeProbability(outcome, normalized, normalized - current, true);
+    return writeOutcomeProbability(
+      outcome,
+      normalized,
+      normalized - current,
+      true,
+    );
   });
 }
 
-function writeOutcomeProbability<T extends Record<string, unknown>>(
-  outcome: T,
-  probability: number,
-  adjustment: number,
-  phase4Adjusted: boolean,
-): T {
-  const nextProbability = roundProbability(probability);
-  const nextPct = roundPct(nextProbability * 100);
-  const adjustmentPct = roundPct(adjustment * 100);
-
+function buildPoeJsonSchema() {
+  /**
+   * Keep this schema simple and explicit.
+   * Poe Responses API accepts JSON schema through text.format.
+   */
   return {
-    ...outcome,
-
-    /**
-     * Phase 4 audit fields.
-     */
-    phase4Adjusted,
-    llmAdjustedProbability: nextProbability,
-    llmAdjustedProbabilityPct: nextPct,
-    llmAdjustmentPct: adjustmentPct,
-
-    /**
-     * Main fields used by UI / trade signal layer.
-     */
-    probability: nextProbability,
-    probabilityPct: nextPct,
-    finalProbability: nextProbability,
-    finalProbabilityPct: nextPct,
-    blendedProbability: nextProbability,
-    blendedProbabilityPct: nextPct,
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      shouldApply: {
+        type: "boolean",
+      },
+      confidence: {
+        type: "string",
+        enum: ["low", "medium", "high"],
+      },
+      globalTemperatureBiasC: {
+        type: "number",
+        minimum: -1.5,
+        maximum: 1.5,
+      },
+      maxAbsoluteAdjustmentPct: {
+        type: "number",
+        minimum: 0,
+        maximum: 8,
+      },
+      rationale: {
+        type: "string",
+      },
+      outcomeAdjustments: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            index: {
+              type: "integer",
+              minimum: 0,
+            },
+            lower: {
+              anyOf: [{ type: "number" }, { type: "null" }],
+            },
+            upper: {
+              anyOf: [{ type: "number" }, { type: "null" }],
+            },
+            adjustmentPct: {
+              type: "number",
+              minimum: -8,
+              maximum: 8,
+            },
+            suggestedAdjustedProbabilityPct: {
+              type: "number",
+              minimum: 0,
+              maximum: 100,
+            },
+            reason: {
+              type: "string",
+            },
+            evidenceTags: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "observed_floor",
+                  "current_temperature",
+                  "hko_official_forecast",
+                  "open_meteo",
+                  "windy",
+                  "solar_heating",
+                  "cloud_cooling",
+                  "rain_cooling",
+                  "humidity",
+                  "wind",
+                  "model_disagreement",
+                  "time_of_day",
+                  "market_dislocation",
+                  "data_quality",
+                  "other",
+                ],
+              },
+            },
+          },
+          required: [
+            "index",
+            "lower",
+            "upper",
+            "adjustmentPct",
+            "suggestedAdjustedProbabilityPct",
+            "reason",
+            "evidenceTags",
+          ],
+        },
+      },
+      warnings: {
+        type: "array",
+        items: {
+          type: "string",
+        },
+      },
+      watchPoints: {
+        type: "array",
+        items: {
+          type: "string",
+        },
+      },
+    },
+    required: [
+      "shouldApply",
+      "confidence",
+      "globalTemperatureBiasC",
+      "maxAbsoluteAdjustmentPct",
+      "rationale",
+      "outcomeAdjustments",
+      "warnings",
+      "watchPoints",
+    ],
   };
 }
 
@@ -235,7 +361,7 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
   return [
     "You are a cautious meteorological calibration layer for a Hong Kong Observatory daily maximum temperature probability model.",
     "",
-    "You must return ONLY the requested structured JSON object.",
+    "Return only the structured JSON object requested by the schema.",
     "",
     "Your task:",
     "- Review the supplied forecast JSON.",
@@ -257,7 +383,7 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
     "Calibration guidance:",
     "- Most adjustments should be between -3pp and +3pp.",
     "- Only use up to ±8pp for unusually clear evidence.",
-    "- Keep total movement small.",
+    "- Keep total probability movement small.",
     "- Prefer no adjustment over speculative adjustment.",
     "",
     "Forecast JSON:",
@@ -267,14 +393,49 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
   ].join("\n");
 }
 
-export async function getLlmStructuredAdjustment(
+function extractJsonFromText(text: string): unknown {
+  const trimmed = text.trim();
+
+  /**
+   * Best case: Poe model obeys text.format and output_text is plain JSON.
+   */
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Continue to fallback extraction.
+  }
+
+  /**
+   * Fallback: handle accidental ```json fenced block.
+   */
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+
+  if (fencedMatch?.[1]) {
+    return JSON.parse(fencedMatch[1].trim());
+  }
+
+  /**
+   * Fallback: extract first JSON object-looking span.
+   * This is intentionally conservative.
+   */
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+  }
+
+  throw new Error("Poe structured adjustment response was not valid JSON.");
+}
+
+export async function getPoeStructuredAdjustment(
   forecast: ForecastResult,
-): Promise<LlmStructuredAdjustmentRun> {
-  const apiKey = process.env.OPENAI_API_KEY;
+): Promise<PoeStructuredAdjustmentRun> {
+  const apiKey = process.env.POE_API_KEY;
   const model =
-    process.env.OPENAI_STRUCTURED_ADJUSTMENT_MODEL ??
-    process.env.OPENAI_MODEL ??
-    DEFAULT_MODEL;
+    process.env.POE_STRUCTURED_ADJUSTMENT_MODEL ??
+    process.env.POE_MODEL ??
+    DEFAULT_POE_MODEL;
 
   if (!apiKey) {
     return {
@@ -282,14 +443,18 @@ export async function getLlmStructuredAdjustment(
       applied: false,
       model,
       adjustment: null,
-      error: "OPENAI_API_KEY is not configured.",
+      error: "POE_API_KEY is not configured.",
+      rawText: null,
     };
   }
 
   try {
-    const openai = new OpenAI({ apiKey });
+    const client = new OpenAI({
+      apiKey,
+      baseURL: "https://api.poe.com/v1",
+    });
 
-    const response = await openai.responses.parse({
+    const response = await client.responses.create({
       model,
       temperature: 0.1,
       max_output_tokens: 2500,
@@ -304,32 +469,43 @@ export async function getLlmStructuredAdjustment(
           content: buildAdjustmentPrompt(forecast),
         },
       ],
+
+      /**
+       * Important:
+       * This is Poe Responses API text.format, not Chat Completions response_format.
+       */
       text: {
-        format: zodTextFormat(
-          ForecastStructuredAdjustmentSchema,
-          "forecast_structured_adjustment",
-        ),
+        format: {
+          type: "json_schema",
+          name: "poe_forecast_structured_adjustment",
+          schema: buildPoeJsonSchema(),
+        },
       },
     });
 
-    const parsed = response.output_parsed;
+    const rawText = response.output_text ?? "";
 
-    if (!parsed) {
+    const parsedJson = extractJsonFromText(rawText);
+    const parsed = PoeStructuredAdjustmentSchema.safeParse(parsedJson);
+
+    if (!parsed.success) {
       return {
         enabled: true,
         applied: false,
         model,
         adjustment: null,
-        error: "OpenAI structured adjustment returned no parsed output.",
+        error: `Poe structured adjustment failed Zod validation: ${parsed.error.message}`,
+        rawText,
       };
     }
 
     return {
       enabled: true,
-      applied: parsed.shouldApply,
+      applied: parsed.data.shouldApply,
       model,
-      adjustment: parsed,
+      adjustment: parsed.data,
       error: null,
+      rawText,
     };
   } catch (error) {
     return {
@@ -340,28 +516,43 @@ export async function getLlmStructuredAdjustment(
       error:
         error instanceof Error
           ? error.message
-          : "Unknown OpenAI structured adjustment error.",
+          : "Unknown Poe structured adjustment error.",
+      rawText: null,
     };
   }
 }
 
-export function applyLlmStructuredAdjustment(
+export function applyPoeStructuredAdjustment(
   forecast: ForecastResult,
-  run: LlmStructuredAdjustmentRun | null | undefined,
+  run: PoeStructuredAdjustmentRun | null | undefined,
 ): ForecastResult {
   if (!run?.adjustment || !run.adjustment.shouldApply) {
     return {
       ...forecast,
       diagnostics: {
         ...forecast.diagnostics,
-        phase4LlmAdjustment: {
+        phase4PoeAdjustment: {
           enabled: Boolean(run?.enabled),
           applied: false,
           model: run?.model ?? null,
           error: run?.error ?? null,
           reason: run?.adjustment
-            ? "LLM returned shouldApply=false."
-            : "No structured adjustment was available.",
+            ? "Poe returned shouldApply=false."
+            : "No Poe structured adjustment was available.",
+        },
+
+        /**
+         * Optional generic alias for UI.
+         */
+        phase4LlmAdjustment: {
+          enabled: Boolean(run?.enabled),
+          applied: false,
+          provider: "poe",
+          model: run?.model ?? null,
+          error: run?.error ?? null,
+          reason: run?.adjustment
+            ? "Poe returned shouldApply=false."
+            : "No Poe structured adjustment was available.",
         },
       },
     } as ForecastResult;
@@ -382,9 +573,17 @@ export function applyLlmStructuredAdjustment(
       ...forecast,
       diagnostics: {
         ...forecast.diagnostics,
+        phase4PoeAdjustment: {
+          enabled: run.enabled,
+          applied: false,
+          model: run.model,
+          error: "No outcome rows were available to adjust.",
+          adjustment: run.adjustment,
+        },
         phase4LlmAdjustment: {
           enabled: run.enabled,
           applied: false,
+          provider: "poe",
           model: run.model,
           error: "No outcome rows were available to adjust.",
           adjustment: run.adjustment,
@@ -398,11 +597,11 @@ export function applyLlmStructuredAdjustment(
   );
 
   /**
-   * Hard application caps.
+   * Hard application caps:
    *
-   * Low confidence: max ±2pp
-   * Medium confidence: max ±5pp
-   * High confidence: max ±8pp
+   * low confidence    => max ±2pp
+   * medium confidence => max ±5pp
+   * high confidence   => max ±8pp
    */
   const confidenceCapPct =
     run.adjustment.confidence === "high"
@@ -427,13 +626,14 @@ export function applyLlmStructuredAdjustment(
 
     const requested = adjustmentByIndex.get(index);
     const requestedDeltaPct = requested?.adjustmentPct ?? 0;
+
     const cappedDeltaPct = clamp(
       requestedDeltaPct,
       -requestedCapPct,
       requestedCapPct,
     );
-    const cappedDelta = cappedDeltaPct / 100;
 
+    const cappedDelta = cappedDeltaPct / 100;
     const adjusted = roundProbability(baseProbability + cappedDelta);
 
     return {
@@ -443,6 +643,12 @@ export function applyLlmStructuredAdjustment(
         adjusted - baseProbability,
         true,
       ),
+      poeAdjustmentReason: requested?.reason ?? null,
+      poeAdjustmentEvidenceTags: requested?.evidenceTags ?? [],
+
+      /**
+       * Generic aliases.
+       */
       llmAdjustmentReason: requested?.reason ?? null,
       llmAdjustmentEvidenceTags: requested?.evidenceTags ?? [],
     };
@@ -455,6 +661,21 @@ export function applyLlmStructuredAdjustment(
       (a, b) => getOutcomeProbability(b) - getOutcomeProbability(a),
     )[0] ?? null;
 
+  const phase4Diagnostics = {
+    enabled: run.enabled,
+    applied: true,
+    provider: "poe",
+    model: run.model,
+    error: run.error,
+    confidence: run.adjustment.confidence,
+    globalTemperatureBiasC: run.adjustment.globalTemperatureBiasC,
+    maxAbsoluteAdjustmentPct: requestedCapPct,
+    rationale: run.adjustment.rationale,
+    warnings: run.adjustment.warnings,
+    watchPoints: run.adjustment.watchPoints,
+    adjustment: run.adjustment,
+  };
+
   const nextForecast = {
     ...forecast,
     outcomeProbabilities: normalized as unknown as ForecastOutcome[],
@@ -463,27 +684,16 @@ export function applyLlmStructuredAdjustment(
     topOutcome: topOutcome as unknown as ForecastOutcome | null,
     diagnostics: {
       ...forecast.diagnostics,
-      phase4LlmAdjustment: {
-        enabled: run.enabled,
-        applied: true,
-        model: run.model,
-        error: run.error,
-        confidence: run.adjustment.confidence,
-        globalTemperatureBiasC: run.adjustment.globalTemperatureBiasC,
-        maxAbsoluteAdjustmentPct: requestedCapPct,
-        rationale: run.adjustment.rationale,
-        warnings: run.adjustment.warnings,
-        watchPoints: run.adjustment.watchPoints,
-        adjustment: run.adjustment,
-      },
+      phase4PoeAdjustment: phase4Diagnostics,
+      phase4LlmAdjustment: phase4Diagnostics,
     },
     warnings: [
       ...(Array.isArray(forecast.warnings) ? forecast.warnings : []),
-      ...run.adjustment.warnings.map((item) => `Phase 4 LLM: ${item}`),
+      ...run.adjustment.warnings.map((item) => `Phase 4 Poe: ${item}`),
     ],
     keyDrivers: [
       ...(Array.isArray(forecast.keyDrivers) ? forecast.keyDrivers : []),
-      `Phase 4 LLM structured adjustment applied: ${run.adjustment.rationale}`,
+      `Phase 4 Poe structured adjustment applied: ${run.adjustment.rationale}`,
     ],
   };
 
