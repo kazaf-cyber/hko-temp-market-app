@@ -5,6 +5,11 @@ import { initDatabase, saveForecastRun } from "@/lib/db";
 import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 import { enrichForecastWithTradeSignals } from "@/lib/trading/enrichForecast";
 import { applyLlmStructuredAdjustment, getLlmStructuredAdjustment, type LlmStructuredAdjustmentRun } from "@/lib/llmStructuredAdjustment";
+import {
+  applyPoeStructuredAdjustment,
+  getPoeStructuredAdjustment,
+  type PoeStructuredAdjustmentRun,
+} from "@/lib/poeStructuredAdjustment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +36,14 @@ type RunForecastOptions = GetForecastOptions & {
   ai?: boolean;
   saveHistory?: boolean;
   state?: MarketState | null;
+
+  /**
+   * Phase 4:
+   * Let Poe produce a strict-ish structured probability adjustment.
+   * Default false to avoid unexpected Poe point usage.
+   */
+  structuredAdjustment?: boolean;
+};
 
   /**
    * Phase 4:
@@ -4357,7 +4370,7 @@ function buildResultForHistory(
   forecast: Forecast,
   aiCommentary: AiCommentary,
   state: MarketState | null = null,
-  structuredAdjustment: LlmStructuredAdjustmentRun | null = null,
+  structuredAdjustment: PoeStructuredAdjustmentRun | null = null,
 ): ForecastResult {
   const normalized = normalizeForecastResultForPage(
     forecast,
@@ -4365,7 +4378,7 @@ function buildResultForHistory(
     state,
   );
 
-  const adjusted = applyLlmStructuredAdjustment(
+  const adjusted = applyPoeStructuredAdjustment(
     normalized,
     structuredAdjustment,
   );
@@ -4389,7 +4402,7 @@ async function saveHistoryIfRequested(params: {
   state: MarketState | null;
   forecast: Forecast;
   aiCommentary: AiCommentary;
-  structuredAdjustment: LlmStructuredAdjustmentRun | null;
+  structuredAdjustment: PoeStructuredAdjustmentRun | null;
 }): Promise<HistorySaveResult> {
     return {
       saved: false,
@@ -4413,7 +4426,7 @@ async function saveHistoryIfRequested(params: {
     */
     await ensureDatabaseInitialized();
 
-    const resultForHistory = buildResultForHistory(
+  const resultForHistory = buildResultForHistory(
   params.forecast,
   params.aiCommentary,
   params.state,
@@ -4444,7 +4457,7 @@ function buildForecastPayload(params: {
   aiCommentary: AiCommentary;
   historySave: HistorySaveResult;
   state?: MarketState | null;
-  structuredAdjustment: LlmStructuredAdjustmentRun | null;
+  structuredAdjustment: PoeStructuredAdjustmentRun | null;
 }) {
   /*
     Normalize into the exact shape page.tsx expects.
@@ -4460,7 +4473,17 @@ const adjustedForDisplay = applyLlmStructuredAdjustment(
   params.structuredAdjustment,
 );
 
-const resultForDisplay = enrichForecastWithTradeSignals(adjustedForDisplay);
+const normalizedForDisplay = normalizeForecastResultForPage(
+  params.forecast,
+  params.aiCommentary,
+  params.state ?? null,
+);
+
+const adjustedForDisplay = applyPoeStructuredAdjustment(
+  normalizedForDisplay,
+  params.structuredAdjustment,
+);
+
 
   const resultRecord = resultForDisplay as unknown as Record<string, unknown>;
 
@@ -4479,33 +4502,28 @@ const resultForDisplay = enrichForecastWithTradeSignals(adjustedForDisplay);
     buildMultiChannelForecastJson(resultForDisplay);
 
   const data = {
-    ...resultRecord,
+  ...resultRecord,
 
-    /*
-      Main aliases expected by page.tsx.
-    */
-    result: resultForDisplay,
-    forecast: resultForDisplay,
-    weather: weatherForDisplay,
-    multiChannelForecastJson,
+  result: resultForDisplay,
+  forecast: resultForDisplay,
+  weather: weatherForDisplay,
+  multiChannelForecastJson,
 
-    /*
-      Poe AI aliases.
-    */
-    ai: params.aiCommentary,
-    aiCommentary: params.aiCommentary,
-    aiExplanation,
-    structuredAdjustment: params.structuredAdjustment,
-    phase4LlmAdjustment:
-   (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
-    ?.phase4LlmAdjustment ?? null,
+  ai: params.aiCommentary,
+  aiCommentary: params.aiCommentary,
+  aiExplanation,
 
-    /*
-      History save status.
-    */
-    historySave: params.historySave
-  };
+  poeStructuredAdjustment: params.structuredAdjustment,
+  structuredAdjustment: params.structuredAdjustment,
+  phase4PoeAdjustment:
+    (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
+      ?.phase4PoeAdjustment ?? null,
+  phase4LlmAdjustment:
+    (resultRecord.diagnostics as Record<string, unknown> | null | undefined)
+      ?.phase4LlmAdjustment ?? null,
 
+  historySave: params.historySave,
+};
   return {
     ok: true,
     generatedAt,
