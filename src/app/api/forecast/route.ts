@@ -4503,7 +4503,10 @@ async function runForecast(options: RunForecastOptions) {
         normalizedForAiBase,
         structuredAdjustment,
       );
-
+      
+      let aiCommentary: Awaited<ReturnType<typeof getPoeForecastCommentary>> | null =
+  null;
+      
       const forecastForAi = {
         ...(normalizedForAi as unknown as Record<string, unknown>),
         aiInputMode: "multi_channel_forecast_json",
