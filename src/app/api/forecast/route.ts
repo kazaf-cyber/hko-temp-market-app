@@ -4726,7 +4726,10 @@ export async function GET(request: Request) {
       If you later want the checkbox to fully control Poe usage, change this
       to parseBoolean(url.searchParams.get("ai"), false).
     */
-    const ai = parseBoolean(body.ai ?? body.forceAI, true);
+    const ai = parseBoolean(
+  url.searchParams.get("ai") ?? url.searchParams.get("forceAI"),
+  true,
+);
 
     const marketWeightOverride =
       parseNumber(url.searchParams.get("marketWeight")) ??
