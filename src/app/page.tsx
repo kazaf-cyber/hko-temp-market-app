@@ -74,6 +74,22 @@ function formatTemp(value: number | null | undefined) {
 
   return `${value.toFixed(1)}°C`;
 }
+
+function formatNumber(value: number | null | undefined, digits = 1, suffix = "") {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
+function formatScore(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "--";
+  }
+
+  return `${Math.round(value)}/100`;
+}
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -1122,6 +1138,186 @@ setMessage(nextMessage);
             )}
           </div>
         </section>
+
+        {forecast && (
+  <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+      <div>
+        <h2 className="text-xl font-semibold">Weather Evidence</h2>
+        <p className="mt-1 text-sm text-slate-400">
+          PR-5 structured evidence：observed floor、temperature guidance、solar heating、
+          rain cooling、air mass、model uncertainty。
+        </p>
+      </div>
+      <div className="rounded-xl bg-slate-950 px-3 py-2 text-sm text-slate-300">
+        Confidence:{" "}
+        <span className="font-semibold text-cyan-300">
+          {String(readPath(forecast, ["weatherEvidence", "uncertainty", "confidenceLabel"]) ?? "--")}
+        </span>
+      </div>
+    </div>
+
+    <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <Card
+        label="Observed max lower bound"
+        value={formatTemp(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "observed", "observedMaxLowerBoundC"]),
+            readPath(forecast, ["observedMaxLowerBoundC"])
+          )
+        )}
+        sub="HKO max-so-far / current temp hard floor"
+      />
+
+      <Card
+        label="Open-Meteo remaining max"
+        value={formatTemp(
+          firstDisplayNumber(
+            readPath(forecast, [
+              "weatherEvidence",
+              "temperatureGuidance",
+              "openMeteoRemainingDayMaxC"
+            ]),
+            readPath(forecast, ["weather", "openMeteoRemainingDayMaxC"])
+          )
+        )}
+        sub="Same-day remaining guidance"
+      />
+
+      <Card
+        label="Windy remaining max"
+        value={formatTemp(
+          firstDisplayNumber(
+            readPath(forecast, [
+              "weatherEvidence",
+              "temperatureGuidance",
+              "windyRemainingDayMaxC"
+            ]),
+            readPath(forecast, ["weather", "windyRemainingDayMaxC"])
+          )
+        )}
+        sub="Same-day remaining guidance"
+      />
+
+      <Card
+        label="HKO official forecast max"
+        value={formatTemp(
+          firstDisplayNumber(
+            readPath(forecast, [
+              "weatherEvidence",
+              "temperatureGuidance",
+              "hkoOfficialForecastMaxC"
+            ]),
+            readPath(forecast, ["officialForecastMaxC"])
+          )
+        )}
+        sub="Forecast prior, not observed floor"
+      />
+
+      <Card
+        label="Solar heating score"
+        value={formatScore(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "heating", "solarHeatingScore"]),
+            readPath(forecast, ["weather", "solarHeatingScore"])
+          )
+        )}
+        sub={`Shortwave mean ${formatNumber(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "heating", "shortwaveRemainingMeanWm2"]),
+            readPath(forecast, ["weather", "shortwaveRemainingMeanWm2"])
+          ),
+          0,
+          " W/m²"
+        )}`}
+      />
+
+      <Card
+        label="Rain cooling score"
+        value={formatScore(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "cooling", "rainCoolingScore"]),
+            readPath(forecast, ["weather", "rainCoolingScore"])
+          )
+        )}
+        sub={`Next 6h rain prob ${formatNumber(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "cooling", "rainProbabilityNext6hPct"]),
+            readPath(forecast, ["weather", "rainProbabilityNext6hPct"])
+          ),
+          0,
+          "%"
+        )}`}
+      />
+
+      <Card
+        label="Cloud penalty"
+        value={formatNumber(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "heating", "cloudCoolingPenaltyC"]),
+            readPath(forecast, ["weather", "cloudCoolingPenaltyC"])
+          ),
+          2,
+          "°C"
+        )}
+        sub={`Cloud now ${formatNumber(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "heating", "cloudCoverNowPct"]),
+            readPath(forecast, ["weather", "cloudCoverNowPct"])
+          ),
+          0,
+          "%"
+        )}`}
+      />
+
+      <Card
+        label="Model disagreement"
+        value={formatNumber(
+          firstDisplayNumber(
+            readPath(forecast, ["weatherEvidence", "uncertainty", "modelDisagreementC"]),
+            readPath(forecast, ["weather", "modelDisagreementC"])
+          ),
+          2,
+          "°C"
+        )}
+        sub={`Agreement ${String(
+          readPath(forecast, ["weatherEvidence", "uncertainty", "agreementLabel"]) ?? "--"
+        )}`}
+      />
+    </div>
+
+    <div className="mt-5 grid gap-4 lg:grid-cols-2">
+      <div className="rounded-xl bg-slate-950 p-4">
+        <h3 className="font-semibold text-slate-100">AI hints</h3>
+        <ul className="mt-3 space-y-2 text-sm text-slate-300">
+          {Array.isArray(readPath(forecast, ["weatherEvidence", "aiHints"])) &&
+          (readPath(forecast, ["weatherEvidence", "aiHints"]) as unknown[]).length > 0 ? (
+            (readPath(forecast, ["weatherEvidence", "aiHints"]) as string[]).map((hint) => (
+              <li key={hint}>• {hint}</li>
+            ))
+          ) : (
+            <li>• No structured weather hints available.</li>
+          )}
+        </ul>
+      </div>
+
+      <div className="rounded-xl bg-slate-950 p-4">
+        <h3 className="font-semibold text-slate-100">Cooling reasons</h3>
+        <ul className="mt-3 space-y-2 text-sm text-slate-300">
+          {Array.isArray(readPath(forecast, ["weatherEvidence", "cooling", "reasons"])) &&
+          (readPath(forecast, ["weatherEvidence", "cooling", "reasons"]) as unknown[]).length >
+            0 ? (
+            (readPath(forecast, ["weatherEvidence", "cooling", "reasons"]) as string[]).map(
+              (reason) => <li key={reason}>• {reason}</li>
+            )
+          ) : (
+            <li>• No rain-cooling reason triggered.</li>
+          )}
+        </ul>
+      </div>
+    </div>
+  </section>
+)}
 
         {forecast && (
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
