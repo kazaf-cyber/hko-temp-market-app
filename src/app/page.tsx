@@ -9,6 +9,7 @@ import type {
   SettlementResult
 } from "@/types";
 import { defaultMarketState } from "@/lib/defaults";
+import ForecastArchivePanel from "@/components/ForecastArchivePanel";
 import { TradingSignalsTable } from "@/components/dashboard/TradingSignalsTable";
 type StateResponse = {
   ok: boolean;
