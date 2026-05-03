@@ -4540,7 +4540,7 @@ async function runForecast(options: RunForecastOptions) {
             : "Poe AI explanation failed.",
       };
     }
-  }
+  
 
   const historySave = await saveHistoryIfRequested({
     saveHistory: Boolean(options.saveHistory),
@@ -4612,7 +4612,7 @@ async function runForecast(options: RunForecastOptions) {
             : "Poe AI explanation failed.",
       };
     }
-  }
+  
 
   const historySave = await saveHistoryIfRequested({
     saveHistory: Boolean(options.saveHistory),
