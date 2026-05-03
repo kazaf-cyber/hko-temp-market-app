@@ -3793,17 +3793,89 @@ function buildForecastPayload(params: {
 
   const aiExplanation =
     getAiExplanationText(params.aiCommentary) ??
+    getAiExplanationText(enrichedRecord.aiExplanation) ??
+    getAiExplanationText(getAt(enrichedRecord, ["ai", "explanation"])) ??
     asString(enrichedRecord.aiExplanation) ??
     null;
 
-  return {
+  /**
+   * IMPORTANT:
+   * Build one canonical object for the UI.
+   *
+   * Do not rely on top-level aiExplanation only.
+   * The frontend may read:
+   *
+   *   json.aiExplanation
+   *   json.forecast.aiExplanation
+   *   json.result.aiExplanation
+   *   json.data.aiExplanation
+   *   json.data.forecast.aiExplanation
+   *   json.data.result.aiExplanation
+   *
+   * So we place the same canonical forecast object in all common aliases.
+   */
+  const forecastForClient: Record<string, unknown> = {
     ...enrichedRecord,
 
     ok: true,
 
-    forecast: enriched,
-    result: enriched,
-    data: enriched,
+    aiExplanation,
+    aiCommentary: params.aiCommentary,
+
+    structuredAdjustment: params.structuredAdjustment,
+    poeStructuredAdjustment: params.structuredAdjustment,
+
+    history: params.historySave,
+    historySave: params.historySave,
+  };
+
+  return {
+    /**
+     * Legacy / flattened shape.
+     * This allows old UI code to read:
+     *
+     *   payload.estimatedFinalDailyMaxC
+     *   payload.outcomes
+     *   payload.aiExplanation
+     */
+    ...forecastForClient,
+
+    ok: true,
+
+    /**
+     * Canonical shape.
+     * Recommended frontend path:
+     *
+     *   payload.forecast
+     */
+    forecast: forecastForClient,
+
+    /**
+     * Additional aliases for existing UI code.
+     */
+    result: forecastForClient,
+
+    /**
+     * Compatibility wrapper.
+     *
+     * This supports all of these:
+     *
+     *   payload.data.estimatedFinalDailyMaxC
+     *   payload.data.aiExplanation
+     *   payload.data.forecast
+     *   payload.data.result
+     */
+    data: {
+      ...forecastForClient,
+      forecast: forecastForClient,
+      result: forecastForClient,
+      aiExplanation,
+    },
+
+    ai: {
+      explanation: aiExplanation,
+      commentary: params.aiCommentary,
+    },
 
     aiCommentary: params.aiCommentary,
     aiExplanation,
