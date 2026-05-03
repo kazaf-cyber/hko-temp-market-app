@@ -3,9 +3,9 @@ import { z } from "zod";
 
 import {
   summarizeForecastForPrompt,
-  type ForecastOutcome,
-  type ForecastResult,
+  type ForecastResult as LibForecastResult,
 } from "@/lib/forecast";
+import type { ForecastResult } from "@/types";
 
 const DEFAULT_POE_MODEL = "Claude-Opus-4.7";
 
@@ -92,6 +92,15 @@ export type PoeStructuredAdjustmentRun = {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+
+type ForecastAdjustmentRecord = {
+  outcomeProbabilities?: unknown;
+  outcomes?: unknown;
+  probabilities?: unknown;
+  diagnostics?: unknown;
+  warnings?: unknown;
+  keyDrivers?: unknown;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -356,7 +365,9 @@ function buildPoeJsonSchema() {
 }
 
 function buildAdjustmentPrompt(forecast: ForecastResult) {
-  const compact = summarizeForecastForPrompt(forecast);
+  const compact = summarizeForecastForPrompt(
+    forecast as unknown as LibForecastResult,
+  );
 
   return [
     "You are a cautious meteorological calibration layer for a Hong Kong Observatory daily maximum temperature probability model.",
