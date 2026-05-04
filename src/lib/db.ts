@@ -3,27 +3,6 @@ import { neon } from "@neondatabase/serverless";
 import { isTemperatureInOutcome } from "@/lib/trading/resolution";
 import type { ForecastResult, HkoWeatherSnapshot, MarketState } from "@/types";
 
-CREATE TABLE IF NOT EXISTS forecast_evaluations (
-  id BIGSERIAL PRIMARY KEY,
-  forecast_run_id BIGINT REFERENCES forecast_runs(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  hkt_date TEXT NOT NULL,
-  target_date TEXT NOT NULL,
-  actual_max_c DOUBLE PRECISION NOT NULL,
-  forecast_mean_c DOUBLE PRECISION,
-  forecast_sigma_c DOUBLE PRECISION,
-  residual_c DOUBLE PRECISION,
-  top_outcome_name TEXT,
-  winning_outcome_name TEXT,
-  probability_assigned_to_winner DOUBLE PRECISION,
-  brier_score DOUBLE PRECISION,
-  log_loss DOUBLE PRECISION,
-  time_band TEXT,
-  rain_cooling_score DOUBLE PRECISION,
-  solar_heating_score DOUBLE PRECISION,
-  cloud_cooling_penalty_c DOUBLE PRECISION,
-  cooling_adjustment_c DOUBLE PRECISION
-);
 
 let cachedSql: ReturnType<typeof neon> | null = null;
 let signalSnapshotsInitPromise: Promise<void> | null = null;
