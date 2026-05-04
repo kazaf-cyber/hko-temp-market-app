@@ -300,7 +300,7 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
   );
 
   return [
-    ""You are a quantitative forecast calibration reviewer for a Hong Kong Observatory daily maximum temperature probability model." for a Hong Kong Observatory daily maximum temperature probability model.",
+    "You are a quantitative forecast calibration reviewer for a Hong Kong Observatory daily maximum temperature probability model.",
     "",
     "Return only the structured JSON object requested by the schema.",
     "",
