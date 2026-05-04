@@ -1521,20 +1521,10 @@ const modelDisagreementC = firstNumber([
     the hard lower bound.
   */
   const modelFutureMeanC = weightedAverage([
-    {
-      value: openMeteoRemainingDayMaxC,
-      weight: 0.48
-    },
-    {
-      value: windyRemainingDayMaxC,
-      weight: 0.32
-    },
-    {
-      value: officialForecastMaxC,
-      weight: 0.2
-    }
-  ]);
-
+  { value: openMeteoRemainingDayMaxC, weight: 0.55 },
+  { value: windyRemainingDayMaxC, weight: 0.35 },
+  { value: officialForecastMaxC, weight: 0.10 },
+]);
   const weatherEvidenceNetAdjustmentC = getWeatherEvidenceNetAdjustmentC(weatherEvidence);
 
 const cooling = estimateCoolingAdjustment({
@@ -1565,7 +1555,8 @@ const cooling = estimateCoolingAdjustment({
     modelFutureMeanC !== null &&
     hasWeatherModelFuture
   ) {
-    adjustedFutureMeanC -= cooling.coolingAdjustmentC;
+    const COOLING_SCALE = 0.75;  
+    adjustedFutureMeanC -= cooling.coolingAdjustmentC * COOLING_SCALE;
   }
 
   /*
@@ -1581,12 +1572,12 @@ const cooling = estimateCoolingAdjustment({
     let lateDayUpsideCapC: number | null = null;
 
     if (hongKongHour >= 21) {
-      lateDayUpsideCapC = 0.1;
-    } else if (hongKongHour >= 18) {
-      lateDayUpsideCapC = 0.22;
-    } else if (hongKongHour >= 16) {
-      lateDayUpsideCapC = 0.45;
-    }
+  lateDayUpsideCapC = 0.15;
+} else if (hongKongHour >= 18) {
+  lateDayUpsideCapC = 0.35;
+} else if (hongKongHour >= 16) {
+  lateDayUpsideCapC = 0.75;
+}
 
     if (lateDayUpsideCapC !== null) {
       adjustedFutureMeanC = Math.min(
@@ -1993,7 +1984,7 @@ function calculateMarketWeight(params: {
     typeof params.marketWeightOverride === "number" &&
     Number.isFinite(params.marketWeightOverride)
   ) {
-    return clamp(params.marketWeightOverride, 0, 0.6);
+    return clamp(params.marketWeightOverride, 0, 0.75);
   }
 
   let weight = 0.22;
@@ -2014,7 +2005,7 @@ function calculateMarketWeight(params: {
 
   weight *= clamp(marketCoverage.coverage, 0.5, 1);
 
-  return clamp(weight, 0, 0.35);
+  return clamp(weight, 0, 0.5);
 }
 
 function buildExplanationFactors(params: {
