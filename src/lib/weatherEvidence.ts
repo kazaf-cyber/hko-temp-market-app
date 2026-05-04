@@ -364,7 +364,7 @@ function estimateCloudCoolingPenaltyC(params: {
   const shortwave = params.shortwaveRemainingMeanWm2;
 
   if (cloud !== null) {
-    if (cloud >= 95) penalty += 0.24;
+    if (cloud >= 95) penalty += 0.16;
     else if (cloud >= 85) penalty += 0.18;
     else if (cloud >= 70) penalty += 0.1;
     else if (cloud >= 55) penalty += 0.04;
@@ -438,7 +438,7 @@ function estimateSolarHeatingBonusC(params: {
     (params.shortwaveRemainingMeanWm2 ?? 0) >= 420 &&
     (params.cloudCoverNowPct ?? 100) <= 50
   ) {
-    return 0.22;
+    return 0.30;
   }
 
   if (
@@ -446,7 +446,7 @@ function estimateSolarHeatingBonusC(params: {
     (params.shortwaveRemainingMeanWm2 ?? 0) >= 300 &&
     (params.cloudCoverNowPct ?? 100) <= 65
   ) {
-    return 0.12;
+    return 0.18;
   }
 
   return 0;
@@ -476,7 +476,7 @@ function estimateRainCooling(params: {
   if (rainProb2h !== null) {
     if (rainProb2h >= 85) {
       score += 35;
-      adjustment += 0.38;
+      adjustment += 0.25;
       reasons.push("Very high next-2h rain probability suppresses heat upside.");
     } else if (rainProb2h >= 65) {
       score += 25;
