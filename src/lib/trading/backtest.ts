@@ -1,5 +1,25 @@
 import type { SignalSnapshotRow } from "@/lib/db";
 
+export type ForecastResidualCalibrationReport = {
+  count: number;
+  meanResidualC: number | null;
+  meanAbsoluteErrorC: number | null;
+  rmseC: number | null;
+  byTimeBand: Record<string, {
+    count: number;
+    meanResidualC: number | null;
+    meanAbsoluteErrorC: number | null;
+  }>;
+  byRainCoolingBucket: Record<string, {
+    count: number;
+    meanResidualC: number | null;
+  }>;
+  bySolarHeatingBucket: Record<string, {
+    count: number;
+    meanResidualC: number | null;
+  }>;
+};
+
 export type TradeGroupMetrics = {
   tradeCount: number;
   settledTradeCount: number;
