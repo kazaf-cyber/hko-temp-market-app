@@ -6,10 +6,7 @@ import {
   type WeatherEvidence
 } from "@/lib/weatherEvidence";
 import type { MarketState, OutcomeRange } from "@/types";
-import {
-  DEFAULT_FORECAST_CALIBRATION,
-  applyEmpiricalMeanCalibration,
-} from "@/lib/forecastCalibration";
+
 
 export const FORECAST_ENGINE_VERSION = "multi-channel-v2.2.0-weather-evidence";
 
