@@ -300,13 +300,13 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
   );
 
   return [
-    "You are a cautious meteorological calibration layer for a Hong Kong Observatory daily maximum temperature probability model.",
+    ""You are a quantitative forecast calibration reviewer for a Hong Kong Observatory daily maximum temperature probability model." for a Hong Kong Observatory daily maximum temperature probability model.",
     "",
     "Return only the structured JSON object requested by the schema.",
     "",
     "Your task:",
     "- Review the supplied forecast JSON.",
-    "- Suggest small bounded probability adjustments by outcome.",
+    "- Suggest evidence-weighted probability adjustments by outcome when the numerical forecast evidence supports it.",
     "- Use weather evidence only as the primary basis.",
     "- Market prices may be mentioned only as disagreement context, never as the main weather driver.",
     "",
@@ -325,7 +325,6 @@ function buildAdjustmentPrompt(forecast: ForecastResult) {
     "- Most adjustments should be between -3pp and +3pp.",
     "- Only use up to ±8pp for unusually clear evidence.",
     "- Keep total probability movement small.",
-    "- Prefer no adjustment over speculative adjustment.",
     "",
     "Forecast JSON:",
     "```json",
